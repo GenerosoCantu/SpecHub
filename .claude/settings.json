@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/bootstrap.sh plan)",
+      "Bash(scripts/bootstrap.sh facts *)",
+      "Bash(scripts/bootstrap.sh facts)",
+      "Bash(scripts/bootstrap.sh services)",
+      "Bash(scripts/dispatch.sh status)",
+      "Bash(scripts/dispatch.sh run *)",
+      "Bash(scripts/dispatch.sh resume *)",
+      "Bash(scripts/dispatch.sh wait)",
+      "Bash(scripts/dispatch.sh wait *)",
+      "Bash(scripts/dispatch.sh verify *)",
+      "Bash(scripts/dispatch.sh serve *)",
+      "Bash(scripts/dispatch.sh merge *)",
+      "Bash(scripts/dispatch.sh clean)",
+      "Bash(scripts/dispatch.sh clean *)",
+      "Bash(scripts/changelog.sh *)",
+      "Bash(scripts/stack.sh status)",
+      "Bash(scripts/stack.sh list)",
+      "Bash(scripts/stack.sh start *)",
+      "Bash(scripts/stack.sh stop *)",
+      "Bash(scripts/stack.sh restart *)",
+      "Bash(wc *)",
+      "Bash(sed -n *)",
+      "Bash(git -C * log --oneline *)",
+      "Bash(git -C * diff *)",
+      "Bash(git -C * rev-parse *)",
+      "Bash(git -C * branch --show-current)"
+    ]
+  }
+}

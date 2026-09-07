@@ -1,0 +1,37 @@
+# spechub.conf — the one place that names your project, its repos and how to run them.
+#
+# `scripts/bootstrap.sh init <repos-root>` writes this file for you (stack detection);
+# edit it by hand afterwards whenever a command, port or path is wrong. It is plain
+# bash — every script in scripts/ sources it. Copy this example to spechub.conf.
+
+PROJECT_NAME="My Platform"
+
+# Base branch feature branches are cut from and merged back into (dev, develop, main …).
+BASE_BRANCH="main"
+
+# Parent directory of the service repos. Relative `dir` entries below resolve against it.
+REPOS_ROOT="$HOME/projects/my-platform"
+
+# Gitignored files copied from a repo's main checkout into each fresh worktree so builds,
+# tests and dev servers work there (glob patterns, space separated).
+WORKTREE_COPY_FILES=".env .env.* application-local.properties"
+
+# Dependency directories linked from the main checkout into each fresh worktree instead of
+# reinstalling (only when they exist). Set DISPATCH_DEPS=install to reinstall instead.
+WORKTREE_LINK_DIRS="node_modules .venv vendor"
+
+# One line per runnable unit:  name|dir|start command|port|label|group|install command
+#   name     short id used everywhere: service identifier in specs, prompts and scripts/stack.sh
+#   dir      absolute, or relative to REPOS_ROOT (a git repo root for code services)
+#   start    the dev-server command, run from `dir`
+#   port     the port it listens on (used for status and collision checks)
+#   label    human name shown on the board
+#   group    static | backend | frontend — start order is static → backend → frontend
+#   install  dependency install command run from `dir`, or - for none
+# Order matters: it is the spec numbering order (01-, 02-, …) used by Step 0.
+SERVICES="
+web|my-web|npm run dev|3000|Web App (Next.js)|frontend|npm install
+api|my-api|npm run start:dev|4000|Main API (NestJS)|backend|npm install
+billing|my-billing|./mvnw spring-boot:run|8080|Billing Service (Spring Boot)|backend|./mvnw -q -DskipTests install
+assets|my-api/data|npx serve -l 3100 --cors|3100|Asset server (serve)|static|-
+"
