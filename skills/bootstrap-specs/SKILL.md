@@ -1,10 +1,9 @@
 ---
 name: bootstrap-specs
 description: Step 0 — generate the whole spec hub from the fact sheets in bootstrap/facts/ (one spec per service, the architecture overview, CONVENTIONS.md, STATUS.md, repo-instructions/). Use when the user says "bootstrap", "generate the specs", "step 0", "document the repos", or after running scripts/bootstrap.sh init on a new or existing codebase.
-model: sonnet
 ---
 
-> **Session rule:** this step runs on **Sonnet** in a fresh session (`/model sonnet` before invoking — the frontmatter pins Sonnet for this turn only). It is transcription from fact sheets, not design. When the files are on disk, **end the session**: the first feature (Step 1) starts a new one. Request from the user: **$ARGUMENTS** (empty: every service in `spechub.conf`; a list of service ids: only those).
+> **Session rule:** this step runs on a **Standard-tier** model in a fresh session (switch the model before invoking). It is transcription from fact sheets, not design. When the files are on disk, **end the session**: the first feature (Step 1) starts a new one. Request from the user: **$ARGUMENTS** (empty: every service in `spechub.conf`; a list of service ids: only those).
 
 # Bootstrap the Specs (Step 0)
 
@@ -27,7 +26,7 @@ Do NOT read the fact sheets, the service repos, or `WORKFLOW.md` in this session
 
 ## 2. Write the service specs — one `spec-writer` per service, all in parallel
 
-For every service in the plan (skipping static servers), launch a `spec-writer` subagent (Agent tool, `subagent_type: spec-writer`) **in one message so they run concurrently**, with this prompt — identical wording for every service, only the values change:
+For every service in the plan (skipping static servers), launch a `spec-writer` subagent (Claude Code: Agent tool, `subagent_type: spec-writer`; Copilot: the `spec-writer` custom agent; a tool without subagents: one fresh session per service, given `.claude/agents/spec-writer.md` as its instructions) **all at once so they run concurrently**, with this prompt — identical wording for every service, only the values change:
 
 ```
 Write the spec for service `{service}` (number {NN}, shape: {single|split}).
@@ -57,11 +56,11 @@ Fill `templates/ARCHITECTURE-OVERVIEW-TEMPLATE.md` **only from the writer report
 
 From `templates/CONVENTIONS-TEMPLATE.md` and the writers' `CONVENTIONS` / `ENV` / `OWNS` lines. A convention goes in only when **two or more services** report the same one (all of them for a single-service project); otherwise it stays in the service spec. Write it as implemented, not as it should be. The Domain Entities table lists every `OWNS` entity with its owning service.
 
-## 5. Write `STATUS.md` and check `CLAUDE.md`
+## 5. Write `STATUS.md` and check `AGENTS.md`
 
 - `STATUS.md` from `templates/STATUS-TEMPLATE.md` with the project name and **empty** In Flight / Shipped tables (drop the example row).
-- `CLAUDE.md`: the services table between `<!-- services:start -->` / `<!-- services:end -->` was written by `scripts/bootstrap.sh`; run `scripts/bootstrap.sh services` if `spechub.conf` changed since. Do not edit `CLAUDE.md` otherwise.
-- `repo-instructions/`: the writers wrote one file per service. Remind the user to copy each into its repo as the instruction file (`CLAUDE.md`; Copilot users point `.github/copilot-instructions.md` at it) — the hub copy is canonical from now on.
+- `AGENTS.md`: the services table between `<!-- services:start -->` / `<!-- services:end -->` was written by `scripts/bootstrap.sh`; run `scripts/bootstrap.sh services` if `spechub.conf` changed since. Do not edit `AGENTS.md` otherwise.
+- `repo-instructions/`: the writers wrote one file per service. Remind the user to copy each into its repo as `AGENTS.md` (with `CLAUDE.md` containing `@AGENTS.md` and `.github/copilot-instructions.md` pointing at it) — the hub copy is canonical from now on.
 
 ## 6. Determinism check (cheap, do it)
 
@@ -71,4 +70,4 @@ Pick the smallest service and run its writer a second time into a scratch path (
 
 Report (under 40 lines): spec files written with sizes and shape per service; overview / conventions / status written; repo-instruction files written and the copy instruction; the determinism diff result; every gap the writers flagged that needs a human answer. Suggest the commit: `git add -A && git commit -m "spec hub: bootstrap specs for {PROJECT_NAME}"`.
 
-Then tell the user, in one line: **"Step 0 is done — commit, then start a new session on Opus for the first feature (Step 1, `Features/FEATURE-{name}.md`)."** Do not design anything in this session.
+Then tell the user, in one line: **"Step 0 is done — commit, then start a new session on an Advanced-tier model for the first feature (Step 1, `Features/FEATURE-{name}.md`)."** Do not design anything in this session.

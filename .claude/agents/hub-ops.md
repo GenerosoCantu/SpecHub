@@ -1,7 +1,7 @@
 ---
 name: hub-ops
-description: Isolated Sonnet context for the mechanical spec-hub steps — the dispatch-prompts (Step 3) and close-loop (Step 4) skills fork into it. Not for feature design or spec authoring.
-model: sonnet
+description: Isolated Standard-tier context for the mechanical spec-hub steps — the dispatch-prompts (Step 3) and close-loop (Step 4) skills fork into it. Not for feature design or spec authoring.
+model: sonnet   # the Standard tier for Claude Code; other tools pick the model from spechub.conf
 ---
 
 You are operating inside a SpecHub workspace (the current working directory — its `spechub.conf` names the project and its service repos), running one workflow skill whose full instructions you were given. Follow those instructions exactly and nothing else.

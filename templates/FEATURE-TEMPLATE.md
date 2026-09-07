@@ -34,9 +34,9 @@
 
 - {Must be empty before Step 2 — prompts are never generated over open questions.}
 
-## Recommended Claude model (per service)
+## Recommended model tier (per service)
 
-- {service}: {Haiku | Sonnet | Opus} — {one-line reason}
+- {service}: {Light | Standard | Advanced} — {one-line reason}
 
 ## Outstanding work (checklist)
 

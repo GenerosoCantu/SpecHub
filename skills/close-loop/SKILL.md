@@ -5,7 +5,7 @@ context: fork
 agent: hub-ops
 ---
 
-> Runs forked in the `hub-ops` subagent (Sonnet): the reconciliation reads (specs, prompts, service diffs) stay in this isolated context and the main session receives only the report. Request from the user: **$ARGUMENTS** (feature name / number, and any deviations they already know of).
+> Runs forked in the `hub-ops` subagent (Standard tier) where the tool supports it, otherwise in a fresh session: the reconciliation reads (specs, prompts, service diffs) stay in this isolated context and the main session receives only the report. Request from the user: **$ARGUMENTS** (feature name / number, and any deviations they already know of).
 
 # Close the Loop (Step 4)
 
@@ -98,4 +98,4 @@ scripts/changelog.sh add "<Feature> (#n) implemented and closed across <services
 
 Report (under 40 lines — it is all the main session receives): branches merged (merge commits per repo, pushed or not), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), archived files, and any convention syncs performed. Flag anything the specs still don't capture.
 
-The loop is closed. The next feature's design (Step 1) starts in a **new session** on Opus.
+The loop is closed. The next feature's design (Step 1) starts in a **new session** on an Advanced-tier model.

@@ -4,7 +4,7 @@
 > **Branch:** feature/{kebab-name}
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
 > **Status:** Generated   <!-- Generated → Applied → Verified -->
-> **Recommended model:** {Haiku | Sonnet | Opus} — {one-line reason}
+> **Recommended model:** {Light | Standard | Advanced} — {one-line reason}
 
 <!-- Size budget: ≤ 8 KB for an enhancement, ≤ 12 KB for a new module. Contract tables are COPIED from the cascaded spec (extract them mechanically with sed/awk into this file), never retyped or paraphrased. No narrative beyond Context. No spec-hub paths in the body: the implementing session cannot see this workspace. -->
 

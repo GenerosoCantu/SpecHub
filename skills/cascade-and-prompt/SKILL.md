@@ -1,10 +1,9 @@
 ---
 name: cascade-and-prompt
 description: Cascade a designed feature into the service specs and generate its stateless implementation prompts in one session (WORKFLOW.md Step 2). Use when the user asks to cascade a feature, generate/create/regenerate PROMPT-{service}-{feature}.md files, or says "step 2", "cascade", or "generate the prompts" for a designed feature.
-model: sonnet
 ---
 
-> **Session rule:** this step runs on **Sonnet** in a fresh session (`/model sonnet` before invoking — the frontmatter pins Sonnet for this turn only). It is transcription, not design. When the prompts are on disk, **end the session**: Step 3 starts a new one.
+> **Session rule:** this step runs on a **Standard-tier** model in a fresh session (switch the model before invoking). It is transcription, not design. When the prompts are on disk, **end the session**: Step 3 starts a new one.
 
 # Cascade & Prompt (Step 2)
 
@@ -23,7 +22,7 @@ Do NOT read every module file, `WORKFLOW.md`, `00-architecture-overview.md`, `CH
 ## 2. Preconditions — verify before touching a spec
 
 - The feature file has no unresolved items under "Open design decisions". If any remain, stop and list them to the user — nothing is cascaded, and no prompt is generated, over an open question.
-- Cross-service features: the feature file declares an `Implementation order` line and a `Recommended Claude model` per service.
+- Cross-service features: the feature file declares an `Implementation order` line and a `Recommended model tier` per service.
 
 ## 3. Cascade (2a)
 
@@ -51,7 +50,7 @@ Every prompt MUST open with the dispatch header:
 > **Recommended model:** {tier} — {one-line reason, carried from the feature file}
 ```
 
-Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute local path; `Branch` is `feature/{kebab-name}` (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Haiku`, `Sonnet`, or `Opus`) since it selects the session's model. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
+Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute local path; `Branch` is `feature/{kebab-name}` (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
 
 Then the body, per WORKFLOW.md Step 2b:
 

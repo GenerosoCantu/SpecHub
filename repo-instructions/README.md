@@ -1,6 +1,6 @@
 # Canonical Repo Instruction Files
 
-This folder holds the **canonical copy** of each service repo's agent instruction file (`CLAUDE.md` in the repo root; Copilot users point `.github/copilot-instructions.md` at it; other agents read `AGENTS.md`). The per-repo instruction file is the one artifact that can silently drift from the hub's `CONVENTIONS.md` — keeping the canon here closes that gap.
+This folder holds the **canonical copy** of each service repo's agent instruction file (`AGENTS.md` in the repo root — read by Codex, Copilot and most agents; `CLAUDE.md` holds one line, `@AGENTS.md`, so Claude Code imports it; `.github/copilot-instructions.md` points at it). The per-repo instruction file is the one artifact that can silently drift from the hub's `CONVENTIONS.md` — keeping the canon here closes that gap.
 
 ## Rules
 
@@ -14,7 +14,8 @@ This folder holds the **canonical copy** of each service repo's agent instructio
 Step 0 (`bootstrap-specs`) seeds this folder: a repo that already has an instruction file gets it copied here verbatim (banner prepended); a repo without one gets a file generated from `_TEMPLATE.md` and the spec's stack facts. After Step 0, copy each file into its repo:
 
 ```bash
-cp repo-instructions/api.md /path/to/api/CLAUDE.md
+cp repo-instructions/api.md /path/to/api/AGENTS.md
+printf '@AGENTS.md\n' > /path/to/api/CLAUDE.md
 ```
 
 ## Template

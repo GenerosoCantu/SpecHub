@@ -9,6 +9,18 @@ PROJECT_NAME="My Platform"
 # Base branch feature branches are cut from and merged back into (dev, develop, main …).
 BASE_BRANCH="main"
 
+# Headless coding agent that runs the prompts (WORKFLOW.md Step 3): claude | codex | copilot.
+# AGENT_BIN overrides the PATH lookup.
+AGENT_CLI="claude"
+#AGENT_BIN=""
+
+# Model per tier for that CLI. Prompts name a tier — Light (simple/backend/config work),
+# Standard (moderate logic, light UI), Advanced (complex UI or reasoning) — and the dispatcher
+# maps it here. Leave commented for the built-in defaults of the chosen CLI.
+#MODEL_LIGHT=""
+#MODEL_STANDARD=""
+#MODEL_ADVANCED=""
+
 # Parent directory of the service repos. Relative `dir` entries below resolve against it.
 REPOS_ROOT="$HOME/projects/my-platform"
 
