@@ -46,6 +46,18 @@ The Claude Code adapter is the one tested end to end. The Codex and Copilot adap
 - One agent CLI on PATH: `claude` ([Claude Code](https://claude.com/claude-code)), `codex` ([Codex CLI](https://github.com/openai/codex)) or `copilot` ([Copilot CLI](https://github.com/github/copilot-cli))
 - The toolchains of your services (node, java, python, …) for `stack.sh` to run them
 
+## Workflow at a glance
+
+| Step | In plain terms |
+|---|---|
+| 0. Bootstrap | Point the hub at your repos once; it detects stacks and writes a spec for every service. |
+| 1. Design | You and an agent describe a feature in one file: what should change, and where. |
+| 2. Cascade & Prompt | That file is folded into the specs, then turned into implementation prompts per service. |
+| 3. Dispatch | Each prompt runs as its own headless agent session in a fresh git worktree; you check the result by hand. |
+| 4. Close | Verified work is merged back, the specs and changelog are updated, and the feature file is archived. |
+
+Steps 1–4 repeat for every feature. See `WORKFLOW.md` for the full detail behind each step.
+
 ## Quick start
 
 ```bash
