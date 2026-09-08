@@ -94,18 +94,28 @@ Run it twice on the same commit and you get the same tables and the same file se
 ## Layout
 
 ```
-spechub.conf                    project, base branch, agent CLI + model tiers, repos root, service table
-AGENTS.md                       agent routing for this workspace (services table maintained by the script)
-CLAUDE.md  .github/copilot-instructions.md    pointers to AGENTS.md
-WORKFLOW.md                     Steps 0–4, context budget, naming, session strategy
-SPEC-GUIDELINES.md              what goes in the overview vs a service spec
-00-architecture-overview.md     generated in Step 0
-NN-{service}.md [+ NN-{service}/]   one spec per service (split when large)
-CONVENTIONS.md  STATUS.md  CHANGELOG.md
-Features/  Prompts/  repo-instructions/  templates/  bootstrap/facts/  archive/
-skills/    bootstrap-specs  cascade-and-prompt  dispatch-prompts  close-loop   (symlinked from .claude/ .github/ .codex/)
-scripts/   bootstrap.sh  stack.sh  dispatch.sh  changelog.sh
-.claude/   settings.json  agents/{spec-writer,hub-ops}.md      .github/agents/*.agent.md
+spechub.conf                        project, base branch, agent CLI + model tiers, repos root, service table
+AGENTS.md                           agent routing for this workspace (services table maintained by the script)
+CLAUDE.md                           pointer to AGENTS.md (Claude Code)
+.github/copilot-instructions.md     pointer to AGENTS.md (Copilot)
+WORKFLOW.md                         Steps 0–4, context budget, naming, session strategy
+SPEC-GUIDELINES.md                  what goes in the overview vs a service spec
+CONVENTIONS.md                      shared conventions (generated in Step 0)
+STATUS.md                           live feature status board
+CHANGELOG.md                        implementation history (written only by scripts/changelog.sh)
+00-architecture-overview.md         system map (generated in Step 0)
+NN-{service}.md [+ NN-{service}/]   one spec per service (split into a directory when large)
+Features/                           pending feature designs (Implemented/ and Staled/ archives inside)
+Prompts/                            active implementation prompts (Implemented/ archive inside)
+repo-instructions/                  canonical AGENTS.md for each service repo
+templates/                          fixed shapes of every document
+bootstrap/facts/                    generated fact sheets, one per service
+archive/                            rolled changelog entries and old material — not a source of truth
+skills/                             bootstrap-specs, cascade-and-prompt, dispatch-prompts, close-loop
+                                    (symlinked from .claude/skills, .github/skills, .codex/skills)
+scripts/                            bootstrap.sh, stack.sh, dispatch.sh, changelog.sh
+.claude/                            settings.json, agents/{spec-writer,hub-ops}.md
+.github/agents/                     Copilot wrappers for the same subagents (*.agent.md)
 ```
 
 ## One repo per service, or a monorepo
