@@ -34,7 +34,8 @@ WORKTREE_LINK_DIRS="node_modules .venv vendor"
 
 # One line per runnable unit:  name|dir|start command|port|label|group|install command
 #   name     short id used everywhere: service identifier in specs, prompts and scripts/stack.sh
-#   dir      absolute, or relative to REPOS_ROOT (a git repo root for code services)
+#   dir      absolute, or relative to REPOS_ROOT — a git repo root, or a folder inside a monorepo
+#            (worktrees are made of the git root; the service runs from the same folder inside them)
 #   start    the dev-server command, run from `dir`
 #   port     the port it listens on (used for status and collision checks)
 #   label    human name shown on the board
@@ -42,8 +43,8 @@ WORKTREE_LINK_DIRS="node_modules .venv vendor"
 #   install  dependency install command run from `dir`, or - for none
 # Order matters: it is the spec numbering order (01-, 02-, …) used by Step 0.
 SERVICES="
-web|my-web|npm run dev|3000|Web App (Next.js)|frontend|npm install
-api|my-api|npm run start:dev|4000|Main API (NestJS)|backend|npm install
+web|my-monorepo/apps/web|npm run dev|3000|Web App (Next.js)|frontend|npm install
+api|my-monorepo/apps/api|npm run start:dev|4000|Main API (NestJS)|backend|npm install
 billing|my-billing|./mvnw spring-boot:run|8080|Billing Service (Spring Boot)|backend|./mvnw -q -DskipTests install
-assets|my-api/data|npx serve -l 3100 --cors|3100|Asset server (serve)|static|-
+assets|my-billing/data|npx serve -l 3100 --cors|3100|Asset server (serve)|static|-
 "

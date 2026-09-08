@@ -20,7 +20,7 @@ Do NOT read `WORKFLOW.md`, service specs, feature files, or the prompt bodies �
 ## 1. Preconditions
 
 - The prompt(s) exist in `Prompts/` with `Status: Generated`. Check with `scripts/dispatch.sh status`.
-- Each header names a `Target repo:` path that exists locally and a `Branch:`.
+- Each header names a `Target repo:` path that exists locally (a git root), a `Branch:`, and — required for monorepos, where several services share one repo — a `Service:` id from `spechub.conf`. `run --all --dry-run` prints the resolved service per prompt; "(none)" means the header needs a `Service:` line.
 - **Prerequisites do not gate dispatch.** All prompts of a feature go out together, even when a prerequisite prompt is not implemented yet. Prerequisites only order verification and merge.
 - Never dispatch a prompt whose Status is `Applied` or `Verified` — use `resume` for follow-ups on an `Applied` prompt.
 

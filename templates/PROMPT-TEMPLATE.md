@@ -1,6 +1,7 @@
 # Task: {imperative description of the implementation}
 
-> **Target repo:** {absolute local path of the service repo — the `dir` of spechub.conf, resolved}
+> **Target repo:** {absolute local path of the git repo root that holds the service}
+> **Service:** {service id — the `name` column of spechub.conf}
 > **Branch:** feature/{kebab-name}
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
 > **Status:** Generated   <!-- Generated → Applied → Verified -->

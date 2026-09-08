@@ -15,7 +15,7 @@ For a feature that has completed Design (Step 1): write its contracts into the s
 2. `Features/FEATURE-{name}.md` — the feature file (must exist in `Features/`; if it doesn't, stop and run Step 1 first; if it is in `Features/Staled/`, stop — staled designs must be re-validated and moved back before use)
 3. For each affected service: its spec. **Single-file spec** (`NN-{service}.md`): read it. **Split spec** (`NN-{service}.md` is an index with a `NN-{service}/` directory): read the index, `NN-{service}/00-core.md`, and **only the module file(s) this feature touches**; read `01-conventions.md` only if env/config, constants or shared shapes are involved.
 4. `STATUS.md` — to add (or find) the feature row
-5. `spechub.conf` — the `dir` (resolved against `REPOS_ROOT`) of each affected service is the prompt's `Target repo`
+5. `spechub.conf` — for each affected service, its `name` is the prompt's `Service` and the git root of its `dir` (resolved against `REPOS_ROOT`; `scripts/stack.sh repos` prints it as the 4th field) is the prompt's `Target repo`
 
 Do NOT read every module file, `WORKFLOW.md`, `00-architecture-overview.md`, `CHANGELOG.md`, `bootstrap/`, or unrelated specs. Do not grep `archive/`, `Features/Implemented/` or `Prompts/Implemented/`. These are the same files both halves need — that is why they share a session; do not re-read them between 2a and 2b except as §4 requires.
 
@@ -43,20 +43,21 @@ File: `Prompts/PROMPT-{service}-{feature}.md`, one per affected service. Service
 Every prompt MUST open with the dispatch header:
 
 ```markdown
-> **Target repo:** {absolute local path}
+> **Target repo:** {absolute local path of the git repo root}
+> **Service:** {service id from spechub.conf}
 > **Branch:** feature/{kebab-name}
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
 > **Status:** Generated   <!-- Generated → Applied → Verified -->
 > **Recommended model:** {tier} — {one-line reason, carried from the feature file}
 ```
 
-Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute local path; `Branch` is `feature/{kebab-name}` (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
+Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute path of the git root (for a monorepo, the repo, not the service folder); `Service` names the spechub.conf service, which tells the dispatcher which subtree the prompt owns and which service to restart; `Branch` is `feature/{kebab-name}` (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
 
 Then the body, per WORKFLOW.md Step 2b:
 
 - **Context** — what the feature does, in 2–5 sentences
 - **Files to study** — existing repo files to read for patterns (keep it to 3–5)
-- **Files to create/modify** — exact paths
+- **Files to create/modify** — exact paths (for a monorepo service, relative to its folder, e.g. `apps/api/src/...` or stated as such)
 - **Schema contract** — field names, types, defaults, indexes, verbatim from the spec
 - **Endpoint definitions** — method, path, guard, request/response shape
 - **Pattern references** — "follow the same structure as X"

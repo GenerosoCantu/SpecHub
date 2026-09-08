@@ -18,6 +18,8 @@ cp repo-instructions/api.md /path/to/api/AGENTS.md
 printf '@AGENTS.md\n' > /path/to/api/CLAUDE.md
 ```
 
+For a monorepo service the file goes into the service's own folder (`/path/to/mono/apps/api/AGENTS.md`): agents read nested instruction files when they work under that folder, and the monorepo's root instruction file stays yours.
+
 ## Template
 
 See `_TEMPLATE.md` for the expected shape.

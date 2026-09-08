@@ -3,9 +3,11 @@
 #
 #   scripts/bootstrap.sh init <repos-root> [--name "<project>"] [--no-install]
 #   scripts/bootstrap.sh init <repo-dir> [<repo-dir>...] [--name "<project>"] [--no-install]
-#       discover the git repos, detect each one's stack (language, framework, start/install
-#       commands, port), write spechub.conf, insert the services table into AGENTS.md, install
-#       dependencies, and write one fact sheet per service (see `facts`).
+#       discover the git repos and, inside each, the services (the repo root when it is an app, or
+#       the workspace members of a monorepo — package.json workspaces, pnpm-workspace.yaml, apps/*,
+#       packages/*, services/*, Maven <module>s, Gradle includes, Go cmd/*); detect each service's
+#       stack (language, framework, start/install commands, port); write spechub.conf; insert the
+#       services table into AGENTS.md; install dependencies; write one fact sheet per service.
 #   scripts/bootstrap.sh facts [<service>...]     (re)write bootstrap/facts/<service>.md for every service in spechub.conf
 #   scripts/bootstrap.sh plan                     print the spec plan: number, service, spec file, module count, split?
 #   scripts/bootstrap.sh services                 refresh the services table in AGENTS.md from spechub.conf
@@ -63,8 +65,8 @@ has() { grep -qE "$1" "$2" 2>/dev/null; }
 # detect_port <dir> <default> — first port found in env files, scripts, entry points, app config, Dockerfile.
 detect_port() {
   local dir="$1" def="$2" p=""
-  p="$(cat "$dir"/.env "$dir"/.env.local "$dir"/.env.development "$dir"/.env.example 2>/dev/null | grep -m1 -oE '^(PORT|SERVER_PORT|APP_PORT)=[0-9]{2,5}' | grep -oE '[0-9]+$' || true)"
-  [ -z "$p" ] && [ -f "$dir/package.json" ] && p="$(sed -n '/"scripts"/,/}/p' "$dir/package.json" | grep -m1 -oE '(-p |--port[= ]|PORT=)[0-9]{2,5}' | grep -oE '[0-9]+$' || true)"
+  p="$(cat "$dir"/.env "$dir"/.env.local "$dir"/.env.development "$dir"/.env.example 2>/dev/null | grep -m1 -oE '^(PORT|SERVER_PORT|APP_PORT)=[0-9]{2,5}' | grep -oE '[0-9]+$' | head -1 || true)"
+  [ -z "$p" ] && [ -f "$dir/package.json" ] && p="$(scripts_block "$dir/package.json" | grep -oE '(-p |--port[= ]|PORT=)[0-9]{2,5}' | grep -oE '[0-9]+$' | head -1 || true)"
   [ -z "$p" ] && p="$(set -f; grep -rhoE --include='*.ts' --include='*.js' --include='*.mjs' $(prune_args) 'listen\([^)]*[^0-9][0-9]{4,5}' "$dir" 2>/dev/null | grep -oE '[0-9]{4,5}' | head -1 || true)"
   [ -z "$p" ] && p="$(cat "$dir"/src/main/resources/application*.properties "$dir"/application*.properties 2>/dev/null | grep -m1 -oE '^server\.port\s*=\s*[0-9]+' | grep -oE '[0-9]+$' || true)"
   [ -z "$p" ] && p="$(cat "$dir"/src/main/resources/application*.y*ml "$dir"/application*.y*ml 2>/dev/null | grep -m1 -oE '^\s*port:\s*[0-9]+' | grep -oE '[0-9]+$' || true)"
@@ -72,8 +74,16 @@ detect_port() {
   printf '%s' "${p:-$def}"
 }
 
+go_mod_of() {  # nearest go.mod in an ancestor directory (Go monorepos keep one module with cmd/*)
+  local d="$1"
+  while [ "$d" != "/" ] && [ -n "$d" ]; do [ -f "$d/go.mod" ] && { echo "$d/go.mod"; return; }; d="$(dirname "$d")"; done
+  echo ""
+}
+scripts_block() {  # scripts_block <package.json> — the "scripts" object on one line (works for minified files too)
+  tr -d '\n\r' < "$1" | grep -oE '"scripts"[[:space:]]*:[[:space:]]*\{[^}]*\}' | head -1
+}
 node_script() {  # node_script <package.json> <name> — 0 if the script exists
-  grep -qE "^\s*\"$2\"\s*:" <(sed -n '/"scripts"/,/}/p' "$1")
+  scripts_block "$1" | grep -qE "\"$2\"[[:space:]]*:"
 }
 
 # detect_stack <dir> — prints  language|framework|group|start|install|port|manifest
@@ -134,12 +144,13 @@ detect_stack() {
     elif [ -f "$dir/Pipfile" ]; then install="pipenv install"
     elif [ -f "$dir/requirements.txt" ]; then install="pip install -r requirements.txt"
     else install="pip install -e ."; fi
-  elif [ -f "$dir/go.mod" ]; then
+  elif [ -f "$dir/go.mod" ] || { [ -f "$dir/main.go" ] && [ -n "$(go_mod_of "$dir")" ]; }; then
+    local gomod; gomod="$dir/go.mod"; [ -f "$gomod" ] || gomod="$(go_mod_of "$dir")"
     lang="Go"; manifest="go.mod"; port=8080; start="go run ."; install="go mod download"
-    if   has 'gin-gonic/gin' "$dir/go.mod"; then fw="Gin"
-    elif has 'labstack/echo' "$dir/go.mod"; then fw="Echo"
-    elif has 'gofiber/fiber' "$dir/go.mod"; then fw="Fiber"
-    elif has 'go-chi/chi' "$dir/go.mod"; then fw="Chi"
+    if   has 'gin-gonic/gin' "$gomod"; then fw="Gin"
+    elif has 'labstack/echo' "$gomod"; then fw="Echo"
+    elif has 'gofiber/fiber' "$gomod"; then fw="Fiber"
+    elif has 'go-chi/chi' "$gomod"; then fw="Chi"
     else fw="Go"; fi
   elif [ -f "$dir/Cargo.toml" ]; then
     lang="Rust"; manifest="Cargo.toml"; port=8080; start="cargo run"; install="cargo build"
@@ -166,7 +177,7 @@ detect_stack() {
   else
     return 1
   fi
-  port="$(detect_port "$dir" "$port")"
+  port="$(detect_port "$dir" "$port" | tr -d '\n\r ')"
   # Bake the detected port into the start command where the framework takes it as a flag.
   case "$fw" in
     Django) start="python manage.py runserver $port" ;;
@@ -190,6 +201,63 @@ discover_repos() {  # discover_repos <path>... — git repo roots (depth ≤ 3 u
     if [ -e "$p/.git" ]; then printf '%s\n' "$p"; continue; fi
     find "$p" -maxdepth 4 -name .git \( -type d -o -type f \) 2>/dev/null | sed 's#/\.git$##'
   done | grep -v -- '-worktrees/' | grep -v '/node_modules/' | grep -vx "$HUB_DIR" | sort -u
+}
+
+# discover_services <git-root> — the runnable units inside one repo, one absolute dir per line.
+# A repo that declares workspaces/modules is a container: its members are the services and the root is
+# skipped. Otherwise the root itself is the service. Members without a runnable start script (libraries)
+# are skipped.
+discover_services() {
+  local root="$1" members="" pat d m
+  if [ -f "$root/package.json" ] && has '"workspaces"' "$root/package.json"; then
+    for pat in $(sed -n '/"workspaces"/,/\]/p' "$root/package.json" | grep -oE '"[^"]+"' | tr -d '"' | grep -vE '^(workspaces|packages|nohoist)$'); do
+      for d in "$root"/$pat; do [ -d "$d" ] && members="$members
+$d"; done
+    done
+  fi
+  if [ -f "$root/pnpm-workspace.yaml" ]; then
+    for pat in $(grep -E '^\s*-\s' "$root/pnpm-workspace.yaml" | sed -E "s/^\s*-\s*['\"]?//; s/['\"]?\s*$//" | grep -v '^!'); do
+      for d in "$root"/$pat; do [ -d "$d" ] && members="$members
+$d"; done
+    done
+  fi
+  if [ -f "$root/pom.xml" ]; then
+    for m in $(grep -oE '<module>[^<]+</module>' "$root/pom.xml" | sed -E 's/<[^>]+>//g'); do
+      [ -f "$root/$m/pom.xml" ] && members="$members
+$root/$m"
+    done
+  fi
+  if ls "$root"/settings.gradle* >/dev/null 2>&1; then
+    for m in $(cat "$root"/settings.gradle* | grep -oE "include[[:space:](]+[^)]*" | grep -oE "['\"][^'\"]+['\"]" | tr -d "'\"" | sed 's/^://; s/:/\//g'); do
+      [ -d "$root/$m" ] && members="$members
+$root/$m"
+    done
+  fi
+  for d in "$root"/apps/* "$root"/packages/* "$root"/services/* "$root"/cmd/*; do
+    [ -d "$d" ] || continue
+    if [ -f "$d/package.json" ] || [ -f "$d/pom.xml" ] || ls "$d"/build.gradle* >/dev/null 2>&1 || [ -f "$d/pyproject.toml" ] || [ -f "$d/requirements.txt" ] || [ -f "$d/main.go" ] || [ -f "$d/Cargo.toml" ] || ls "$d"/*.csproj >/dev/null 2>&1; then
+      members="$members
+$d"
+    fi
+  done
+  members="$(printf '%s\n' "$members" | grep . | sort -u)"
+  if [ -z "$members" ]; then echo "$root"; return; fi
+  # Libraries: a node member without a runnable script is not a service.
+  local out=""
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    if [ -f "$d/package.json" ]; then
+      local runnable=0 sc
+      for sc in start:dev dev serve start; do node_script "$d/package.json" "$sc" && runnable=1; done
+      [ "$runnable" = 1 ] || continue
+    fi
+    out="$out
+$d"
+  done <<EOF
+$members
+EOF
+  printf '%s\n' "$out" | grep .
+  return 0
 }
 
 pick_base_branch() {  # pick_base_branch <repo>... — the candidate (dev, develop, main, master) most repos have; ties → that order
@@ -221,18 +289,25 @@ cmd_init() {
   local root; root="$(cd "${paths[0]}" && pwd -P)"; [ -e "$root/.git" ] && root="$(dirname "$root")"
   [ -n "$name" ] || name="$(basename "$root")"
 
-  local rows="" r det n rel
-  while IFS= read -r r; do
-    [ -n "$r" ] || continue
+  local rows="" r det n rel svc names=" "
+  while IFS= read -r svc; do
+    [ -n "$svc" ] || continue
+    r="$svc"
     det="$(detect_stack "$r")" || { log "skip $r — no recognised manifest (add it to spechub.conf by hand if it is a service)"; continue; }
     n="$(kebab "$(basename "$r")")"
+    # two repos with an apps/api each: prefix the second with its repo name
+    case "$names" in *" $n "*) n="$(kebab "$(basename "$(git -C "$r" rev-parse --show-toplevel 2>/dev/null || dirname "$r")")")-$n" ;; esac
+    names="$names$n "
     rel="$r"; case "$r" in "$root"/*) rel="${r#$root/}" ;; esac
     # name|dir|start|port|label|group|install|lang|framework
     rows="$rows
 $n|$rel|$(printf '%s' "$det" | cut -d'|' -f4)|$(printf '%s' "$det" | cut -d'|' -f6)|$(basename "$r") ($(printf '%s' "$det" | cut -d'|' -f2))|$(printf '%s' "$det" | cut -d'|' -f3)|$(printf '%s' "$det" | cut -d'|' -f5)"
-    log "$n → $(printf '%s' "$det" | cut -d'|' -f2) [$(printf '%s' "$det" | cut -d'|' -f3)] port $(printf '%s' "$det" | cut -d'|' -f6)"
+    log "$n → $(printf '%s' "$det" | cut -d'|' -f2) [$(printf '%s' "$det" | cut -d'|' -f3)] port $(printf '%s' "$det" | cut -d'|' -f6)  ($rel)"
   done <<EOF
+$(while IFS= read -r r; do [ -n "$r" ] && discover_services "$r"; done <<EOR
 $repos
+EOR
+)
 EOF
   [ -n "$(printf '%s' "$rows" | tr -d '\n ')" ] || die "No service detected."
   # Spec order: frontends, then backends, then static — each alphabetical. This order is the spec numbering.
@@ -269,8 +344,9 @@ EOF
   cat >&2 <<EOF
 
 [bootstrap] Next:
-  1. Review spechub.conf: delete repos that are not services (old copies, scripts), fix commands/ports/groups,
-     reorder the rows (order = spec numbering). Then 'scripts/stack.sh start' to check the stack runs.
+  1. Review spechub.conf: delete rows that are not services (old copies, scripts, libraries), fix
+     commands/ports/groups, reorder the rows (order = spec numbering). A monorepo appears as one row per
+     workspace member (dir = repo/apps/x). Then 'scripts/stack.sh start' to check the stack runs.
   2. Open your coding agent in this folder on a Standard-tier model and run the bootstrap-specs skill
      (Claude Code: /bootstrap-specs; other tools: "follow skills/bootstrap-specs/SKILL.md").
      It writes the service specs, the architecture overview, CONVENTIONS.md, STATUS.md and repo-instructions/
@@ -409,7 +485,8 @@ facts_ext_counts() {
 }
 facts_scripts() {  # package.json scripts as a table
   [ -f "$1/package.json" ] || return 0
-  sed -n '/"scripts"/,/}/p' "$1/package.json" | grep -E '^[[:space:]]*"[^"]+"[[:space:]]*:[[:space:]]*"' | sed -E 's/^[[:space:]]*"([^"]+)"[[:space:]]*:[[:space:]]*"(.*)",?[[:space:]]*$/| `\1` | `\2` |/' | sed 's/\\"/"/g'
+  scripts_block "$1/package.json" | sed -E 's/^"scripts"[[:space:]]*:[[:space:]]*\{//; s/\}$//' | sed -E 's/",[[:space:]]*"/"\
+"/g' | sed -E 's/^[[:space:]]*"([^"]+)"[[:space:]]*:[[:space:]]*"(.*)"[[:space:]]*$/| `\1` | `\2` |/' | sed 's/\\"/"/g'
 }
 facts_readme() {
   local dir="$1" f
@@ -428,6 +505,8 @@ write_facts() {  # write_facts <name> <dir> <start> <port> <label> <group> <inst
   sha="$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo '-')"
   branch="$(git -C "$dir" branch --show-current 2>/dev/null || echo '-')"
   remote="$(git -C "$dir" remote get-url origin 2>/dev/null || echo '-')"
+  local groot sub; groot="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")"
+  sub="${dir#$groot/}"; [ "$sub" = "$dir" ] && sub=""
   local sr; sr="$(source_root "$dir")"
   local instr=""; local f
   for f in CLAUDE.md AGENTS.md .github/copilot-instructions.md .cursorrules; do [ -f "$dir/$f" ] && instr="$instr $f"; done
@@ -436,8 +515,8 @@ write_facts() {  # write_facts <name> <dir> <start> <port> <label> <group> <inst
     printf '# Fact sheet — `%s`\n\n' "$name"
     printf '> Mechanical extraction by `scripts/bootstrap.sh facts` from `%s` @ `%s` (%s). Regenerate, never edit. The bootstrap-specs skill writes the service spec from this sheet plus the files it names.\n\n' "$dir" "$sha" "$branch"
     printf '## 1. Identity\n\n| Field | Value |\n|---|---|\n'
-    printf '| Service | `%s` |\n| Label | %s |\n| Group | %s |\n| Repo | `%s` |\n| Remote | `%s` |\n| Branch @ HEAD | `%s` @ `%s` |\n| Start | `%s` |\n| Install | `%s` |\n| Port | %s |\n| Instruction files | %s |\n\n' \
-      "$name" "$label" "$group" "$dir" "$remote" "$branch" "$sha" "$start" "$install" "$port" "${instr:-none}"
+    printf '| Service | `%s` |\n| Label | %s |\n| Group | %s |\n| Directory | `%s` |\n| Git root | `%s` |\n| Path in repo | %s |\n| Remote | `%s` |\n| Branch @ HEAD | `%s` @ `%s` |\n| Start | `%s` |\n| Install | `%s` |\n| Port | %s |\n| Instruction files | %s |\n\n' \
+      "$name" "$label" "$group" "$dir" "$groot" "${sub:+\`$sub/\`}${sub:-(repo root)}" "$remote" "$branch" "$sha" "$start" "$install" "$port" "${instr:-none}"
     printf '## 2. Stack\n\n| Field | Value |\n|---|---|\n| Language | %s |\n| Framework | %s |\n| Manifest | `%s` |\n| Source root | `%s` |\n| Source files | %s |\n\n' "$lang" "$fw" "$manifest" "$sr" "$(count_src "$dir")"
     local scripts; scripts="$(facts_scripts "$dir")"
     if [ -n "$scripts" ]; then printf '### Scripts\n\n| Script | Command |\n|---|---|\n%s\n\n' "$scripts"; fi

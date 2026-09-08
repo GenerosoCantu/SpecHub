@@ -96,6 +96,10 @@ scripts/   bootstrap.sh  stack.sh  dispatch.sh  changelog.sh
 .claude/   settings.json  agents/{spec-writer,hub-ops}.md      .github/agents/*.agent.md
 ```
 
+## One repo per service, or a monorepo
+
+A service is a directory: a git repo root, or a folder inside a monorepo. `bootstrap.sh init` discovers workspace members (`package.json` workspaces, `pnpm-workspace.yaml`, `apps/*`, `packages/*`, `services/*`, Maven modules, Gradle includes, Go `cmd/*`) and skips libraries without a start script. Worktrees are always made of the git root; a monorepo service runs from the same folder inside the worktree, and its prompt carries a `Service:` header so the dispatcher knows which subtree it owns and which service to restart. Two prompts on the same monorepo get two branches and two worktrees, as with separate repos. pnpm workspaces keep per-package `node_modules`, so set `DISPATCH_DEPS=install` for those.
+
 ## Greenfield or brownfield
 
 Both run the same five commands. For a brand-new system, scaffold the empty repos with their frameworks first (the manifests are what detection reads), bootstrap thin specs, and grow them feature by feature. For an existing system, the fact sheets carry every route, model and env var the code references, and the specs describe what is actually there — gaps and all.

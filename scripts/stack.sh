@@ -11,9 +11,9 @@
 #   ./scripts/stack.sh logs [names...]  # tail -f
 #   ./scripts/stack.sh install [names...]   # run each service's install command
 #   ./scripts/stack.sh list
-#   ./scripts/stack.sh service-for <repo-dir>   # service name for a repo path (used by dispatch.sh)
+#   ./scripts/stack.sh service-for <repo-dir>   # service name(s) whose git root is <repo-dir>, one per line (used by dispatch.sh)
 #   ./scripts/stack.sh is-running <name>        # prints the pid, exit 0, when the service is running
-#   ./scripts/stack.sh repos                    # name|main-checkout|kind for every service
+#   ./scripts/stack.sh repos                    # name|dir|kind|git-root|path-in-repo for every service
 #
 #   -w, --worktree <branch>   run code services from their git worktree for
 #                             <branch> instead of the main checkout, e.g.
@@ -22,7 +22,9 @@
 #                             back to its main checkout. Static servers never move.
 #                             Same as STACK_WORKTREE=feature/site-texts.
 #
-# The service table lives in spechub.conf (name|dir|start|port|label|group|install).
+# The service table lives in spechub.conf (name|dir|start|port|label|group|install). A service `dir`
+# is either a git repo root or a directory inside one (monorepo): worktrees are always made of the
+# git root, and the service runs from the same relative path inside the worktree.
 # Processes run detached in their own process group; PIDs live in .run/ and
 # output in .logs/. Nothing is installed or written outside those two dirs.
 # ---------------------------------------------------------------------------
@@ -70,12 +72,23 @@ svc_base_dir() {
   local d; d="$(field "$1" 2)"; d="${d/#\~/$HOME}"
   case "$d" in /*) echo "$d" ;; *) echo "$ROOT/$d" ;; esac
 }
-# Where a branch's worktree lives — matches scripts/dispatch.sh:
-#   <repo-parent>/<repo-name>-worktrees/<branch with / replaced by ->
-svc_worktree_dir() {
+# Git root of a service's main checkout (the service dir itself, or the monorepo that contains it).
+svc_git_root() {
   local base; base="$(svc_base_dir "$1")"
-  printf '%s/%s-worktrees/%s\n' "$(dirname "$base")" "$(basename "$base")" \
-    "$(printf '%s' "$WORKTREE" | tr '/' '-')"
+  git -C "$base" rev-parse --show-toplevel 2>/dev/null || echo "$base"
+}
+# Path of the service inside its repo ("" when the service is the repo root).
+svc_subpath() {
+  local base root; base="$(cd "$(svc_base_dir "$1")" 2>/dev/null && pwd -P)" || { echo ""; return; }
+  root="$(cd "$(svc_git_root "$1")" && pwd -P)"
+  case "$base" in "$root") echo "" ;; "$root"/*) echo "${base#$root/}" ;; *) echo "" ;; esac
+}
+# Where a branch's worktree lives — matches scripts/dispatch.sh:
+#   <repo-parent>/<repo-name>-worktrees/<branch with / replaced by ->[/<path-in-repo>]
+svc_worktree_dir() {
+  local root sub; root="$(svc_git_root "$1")"; sub="$(svc_subpath "$1")"
+  printf '%s/%s-worktrees/%s%s\n' "$(dirname "$root")" "$(basename "$root")" \
+    "$(printf '%s' "$WORKTREE" | tr '/' '-')" "${sub:+/$sub}"
 }
 # The directory a service actually runs from. Falls back to the main checkout
 # when no worktree exists for that branch, so a partial feature still starts.
@@ -273,17 +286,17 @@ cmd_list() {
 }
 
 # --- plumbing used by scripts/dispatch.sh --------------------------------------
-cmd_service_for() {   # service name whose main checkout is <dir>; exit 1 if none
-  local want n
+cmd_service_for() {   # every code service whose git root is <dir> (one per line); exit 1 if none
+  local want n found=0
   want="$(cd "$1" 2>/dev/null && pwd -P)" || exit 1
   for n in $ALL_SERVICES; do
     [ "$(svc_kind "$n")" = code ] || continue
-    [ "$(cd "$(svc_base_dir "$n")" 2>/dev/null && pwd -P)" = "$want" ] && { echo "$n"; return 0; }
+    [ "$(cd "$(svc_git_root "$n")" 2>/dev/null && pwd -P)" = "$want" ] && { echo "$n"; found=1; }
   done
-  return 1
+  [ "$found" = 1 ]
 }
 cmd_is_running() { [ -n "$(meta "$1")" ] || die "Unknown service '$1'"; running_pid "$1"; }   # prints the pid
-cmd_repos() { local n; for n in $ALL_SERVICES; do printf '%s|%s|%s\n' "$n" "$(svc_base_dir "$n")" "$(svc_kind "$n")"; done; }
+cmd_repos() { local n; for n in $ALL_SERVICES; do printf '%s|%s|%s|%s|%s\n' "$n" "$(svc_base_dir "$n")" "$(svc_kind "$n")" "$(svc_git_root "$n")" "$(svc_subpath "$n")"; done; }
 
 usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
 

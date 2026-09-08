@@ -17,7 +17,10 @@
 #   scripts/dispatch.sh merge --all [--push]         merge every Verified prompt
 #   scripts/dispatch.sh clean [--force]              delete every <repo>-worktrees/ leftover (registered ones need --force)
 #
-# <prompt> is a file name in Prompts/ (with or without .md) or a path to a prompt file.
+# <prompt> is a file name in Prompts/ (with or without .md) or a path to a prompt file. Its dispatch header
+# names the Target repo (a git root), the Branch, and — for monorepos — the Service it implements (a `name`
+# from spechub.conf whose `dir` lies inside that repo); without a Service line the service is inferred from
+# the file name (PROMPT-{service}-{feature}.md) or, for a single-service repo, from the repo itself.
 # Add --dry-run to `run` to print the plan without touching any repo.
 # Add --wait to `run`/`resume` to block until the sessions finish (same as running `wait` after).
 # Add --no-serve to `run`/`resume` to skip the automatic service restart.
@@ -184,6 +187,29 @@ branch_name() {
   echo "$b"
 }
 
+# Service id a prompt implements: the "Service:" header line, else the longest spechub.conf service name
+# that prefixes the file name after "PROMPT-", else the only service whose git root is the target repo.
+prompt_service() {
+  local file="$1" svc; svc="$(header_field "$file" "Service" | awk '{print $1}')"
+  [ -n "$svc" ] && { echo "$svc"; return 0; }
+  [ -x "$STACK" ] && [ -f "$CONF" ] || return 0
+  local base name best="" line
+  base="$(basename "$file" .md)"
+  while IFS='|' read -r name _; do
+    case "$base" in "PROMPT-$name-"*) [ "${#name}" -gt "${#best}" ] && best="$name" ;; esac
+  done < <("$STACK" repos)
+  [ -n "$best" ] && { echo "$best"; return 0; }
+  local repo; repo="$(header_field "$file" "Target repo")"; repo="${repo/#\~/$HOME}"
+  local list; list="$("$STACK" service-for "$repo" 2>/dev/null || true)"
+  [ "$(printf '%s\n' "$list" | grep -c .)" = 1 ] && echo "$list"
+  return 0
+}
+# Path of the service inside its repo ("" for a repo-root service), from stack.sh repos.
+service_subpath() {
+  [ -n "${1:-}" ] && [ -x "$STACK" ] && [ -f "$CONF" ] || { echo ""; return 0; }
+  "$STACK" repos | awk -F'|' -v n="$1" '$1==n {print $5}'
+}
+
 worktree_path() {
   local repo="$1" branch="$2" root
   root="${DISPATCH_WORKTREE_ROOT:-$(dirname "$repo")/$(basename "$repo")-worktrees}"
@@ -228,7 +254,7 @@ ensure_base_branch() {  # warn (don't mutate) if local base is behind origin
   fi
 }
 
-setup_worktree() {  # setup_worktree <repo> <branch> <worktree>
+setup_worktree() {  # setup_worktree <repo> <branch> <worktree> [<service>]
   local repo="$1" branch="$2" wt="$3"
   if [ -d "$wt" ]; then
     log "Worktree already exists, reusing: $wt"
@@ -261,12 +287,14 @@ setup_worktree() {  # setup_worktree <repo> <branch> <worktree>
 
   case "$DEPS_MODE" in
     link)
-      local d
+      local d sub; sub="$(service_subpath "${4:-}")"
       for d in $LINK_DIRS; do
         if [ -d "$repo/$d" ] && [ ! -e "$wt/$d" ]; then ln -s "$repo/$d" "$wt/$d"; fi
+        # monorepo: the service's own dependency dir (npm/yarn hoist partially, pnpm not at all)
+        if [ -n "$sub" ] && [ -d "$repo/$sub/$d" ] && [ ! -e "$wt/$sub/$d" ]; then ln -s "$repo/$sub/$d" "$wt/$sub/$d"; fi
       done ;;
     install)
-      local svc; svc="$(service_for_repo "$repo")"
+      local svc="${4:-}"
       if [ -n "$svc" ]; then log "Installing dependencies in $wt"; "$STACK" install "$svc" -w "$branch" >&2 || log "WARNING: install failed in $wt"
       else log "WARNING: $repo is not a service in spechub.conf — cannot run its install command; install by hand in $wt"; fi ;;
     none) ;;
@@ -322,7 +350,15 @@ prune_worktree_root() {  # prune_worktree_root <repo> <root> — delete the root
 # Services (scripts/stack.sh)
 # ---------------------------------------------------------------------------
 
-service_for_repo() { [ -x "$STACK" ] && [ -f "$CONF" ] && "$STACK" service-for "$1" 2>/dev/null || true; }
+services_under() {  # services_under <dir> — every running service whose cwd is <dir> or below it
+  [ -x "$STACK" ] && [ -f "$CONF" ] || return 0
+  local name cwd
+  while IFS='|' read -r name _; do
+    cwd="$(service_cwd "$name")"
+    case "$cwd" in "$1"|"$1"/*) echo "$name" ;; esac
+  done < <("$STACK" repos)
+  return 0
+}
 
 service_cwd() {  # service_cwd <service> — working directory of the running service, or empty
   local pid; pid="$("$STACK" is-running "$1" 2>/dev/null)" || return 0
@@ -330,14 +366,14 @@ service_cwd() {  # service_cwd <service> — working directory of the running se
   lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }
 
-# serve_pairs "<repo>|<branch>" ... — restart each affected service from its worktree; with
+# serve_pairs "<service>|<branch>" ... — restart each affected service from its worktree; with
 # SERVE=stack also bring up everything else (already-running services are left alone).
 serve_pairs() {
   [ "$SERVE" = "none" ] && return 0
   [ -x "$STACK" ] && [ -f "$CONF" ] || { log "WARNING: scripts/stack.sh or spechub.conf not found — start the services by hand"; return 0; }
   local pair svc affected=""
   for pair in "$@"; do
-    svc="$(service_for_repo "${pair%%|*}")"
+    svc="${pair%%|*}"
     [ -n "$svc" ] && affected="$affected $svc"
   done
   if [ "$SERVE" = "stack" ]; then
@@ -349,8 +385,8 @@ serve_pairs() {
     "$STACK" start $others >&2 || true
   fi
   for pair in "$@"; do
-    svc="$(service_for_repo "${pair%%|*}")"
-    [ -n "$svc" ] || { log "WARNING: no stack.sh service for ${pair%%|*} — run it by hand"; continue; }
+    svc="${pair%%|*}"
+    [ -n "$svc" ] || { log "WARNING: a prompt names no spechub.conf service (add a 'Service:' header line) — restart its service by hand"; continue; }
     log "Restarting $svc from worktree ${pair#*|}"
     "$STACK" restart "$svc" -w "${pair#*|}" >&2 || log "WARNING: could not restart $svc"
   done
@@ -362,10 +398,12 @@ serve_pairs() {
 # Headless session
 # ---------------------------------------------------------------------------
 
-system_preamble() {  # system_preamble <prompt-name> <repo> <branch> <worktree>
+system_preamble() {  # system_preamble <prompt-name> <repo> <branch> <worktree> [<service>]
+  local sub; sub="$(service_subpath "${5:-}")"
   cat <<EOF
 You are executing an implementation prompt dispatched from the $PROJECT spec hub (prompt: $1).
-Working directory: $4 — a git worktree of $2 on branch '$3', based on '$BASE_BRANCH'.
+Working directory: $4 — a git worktree of $2 on branch '$3', based on '$BASE_BRANCH'.${sub:+
+This prompt implements service '${5}', whose code lives under '$sub/' in this worktree. Stay inside that subtree unless the prompt names a shared file; the file paths in the prompt are relative to '$sub/' unless they say otherwise.}
 Rules:
 - The repo's instruction file (AGENTS.md / CLAUDE.md) in this directory is already in your context; follow it. Do not re-read it.
 - Never switch branches, never modify files outside this directory, never push.
@@ -608,7 +646,8 @@ cmd__worker() {
   # A polite kill still leaves a record; SIGKILL is caught later by reap_dead.
   trap 'record_abort "$file" "$run_id" "$kind" "worker received a termination signal"; rm -f "$(active_file "$file")"; exit 143' TERM INT HUP
 
-  local preamble; preamble="$(system_preamble "$name" "$repo" "$branch" "$wt")"
+  local svc; svc="$(prompt_service "$file")"
+  local preamble; preamble="$(system_preamble "$name" "$repo" "$branch" "$wt" "$svc")"
   local rc=0 base_sha; base_sha="$(git -C "$repo" rev-parse --short "$BASE_BRANCH")"
   if [ "$kind" = "resume" ]; then
     local sid; sid="$(grep -E '^\| Session ID \|' "$file" | tail -1 | sed -E 's/.*`([^`]+)`.*/\1/' || true)"
@@ -684,7 +723,7 @@ cmd__batch() {
     rc=0; wait "${pids[$i]}" || rc=$?
     f="${files[$i]}"
     if [ "$rc" = "0" ]; then
-      ok_pairs+=("$(repo_path "$f")|$(branch_name "$f")")
+      ok_pairs+=("$(prompt_service "$f")|$(branch_name "$f")")
     else
       failed=$((failed+1))
       record_abort "$f" "${ids[$i]}" "$kind" "worker exited $rc without reporting"   # no-op if it did report
@@ -735,12 +774,13 @@ cmd_run() {
     if [ "$DRY_RUN" = "1" ]; then
       local perms
       case "$AGENT_CLI" in claude) perms="$PERMISSION_MODE + allowedTools" ;; codex) perms="--full-auto" ;; copilot) perms="--allow-all-tools" ;; esac
-      printf 'DRY RUN  %s\n  repo:     %s\n  branch:   %s (from %s)\n  worktree: %s\n  agent:    %s\n  model:    %s\n  perms:    %s\n' \
-        "$(basename "$f")" "$repo" "$branch" "$BASE_BRANCH" "$wt" "$AGENT_CLI" "$model" "$perms"
+      local psvc; psvc="$(prompt_service "$f")"; local psub; psub="$(service_subpath "$psvc")"
+      printf 'DRY RUN  %s\n  repo:     %s\n  service:  %s%s\n  branch:   %s (from %s)\n  worktree: %s\n  agent:    %s\n  model:    %s\n  perms:    %s\n' \
+        "$(basename "$f")" "$repo" "${psvc:-(none — add a Service: header)}" "${psub:+ (at $psub/)}" "$branch" "$BASE_BRANCH" "$wt" "$AGENT_CLI" "$model" "$perms"
       continue
     fi
     case "$seen_repos" in *"|$repo|"*) ;; *) ensure_base_branch "$repo"; seen_repos="$seen_repos|$repo|" ;; esac
-    setup_worktree "$repo" "$branch" "$wt"
+    setup_worktree "$repo" "$branch" "$wt" "$(prompt_service "$f")"
   done
   [ "$DRY_RUN" = "1" ] && { log "Dry run — nothing was changed. $AGENT_CLI: $(find_agent)"; return 0; }
   find_agent >/dev/null
@@ -839,7 +879,7 @@ cmd_serve() {
   for f in "${files[@]}"; do
     wt="$(worktree_path "$(repo_path "$f")" "$(branch_name "$f")")"
     [ -d "$wt" ] || { log "WARNING: $(basename "$f" .md) has no worktree ($wt) — skipped"; continue; }
-    pairs+=("$(repo_path "$f")|$(branch_name "$f")")
+    pairs+=("$(prompt_service "$f")|$(branch_name "$f")")
   done
   [ "${#pairs[@]}" -gt 0 ] || die "No worktree present for the given prompt(s)."
   serve_pairs "${pairs[@]}"
@@ -866,16 +906,17 @@ merge_one() {  # merge_one <prompt-file>
   local merge_sha; merge_sha="$(git -C "$repo" rev-parse --short HEAD)"
   local impl_shas; impl_shas="$(git -C "$repo" log --oneline --no-merges "$BASE_BRANCH^1..$branch" | awk '{print $1}' | paste -sd ',' -)"
 
-  # If the service is running from this worktree, stop it before the directory disappears.
-  local svc="" restart=0
-  svc="$(service_for_repo "$repo")"
-  if [ -n "$svc" ] && [ "$(service_cwd "$svc")" = "$wt" ]; then
-    log "Stopping $svc (running from the worktree)"; "$STACK" stop "$svc" >&2 || true; restart=1
-  fi
+  # Every service running from this worktree (repo-root or nested) is stopped before the directory disappears.
+  local svc="" running
+  svc="$(prompt_service "$file")"
+  running="$(services_under "$wt" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  [ -n "${running// /}" ] && { log "Stopping$( printf ' %s' $running ) (running from the worktree)"; "$STACK" stop $running >&2 || true; }
   remove_worktree "$repo" "$wt"
   git -C "$repo" branch -d "$branch"
-  if [ "$restart" = "1" ] && [ "$SERVE" != "none" ]; then
-    log "Starting $svc from the main checkout"; "$STACK" start "$svc" >&2 || log "WARNING: could not start $svc"
+  if [ -n "${running// /}" ] && [ "$SERVE" != "none" ]; then
+    # shellcheck disable=SC2086
+    log "Starting$( printf ' %s' $running ) from the main checkout"; "$STACK" start $running >&2 || log "WARNING: could not start$( printf ' %s' $running )"
   fi
 
   local pushed="no"
@@ -885,7 +926,7 @@ merge_one() {  # merge_one <prompt-file>
 "| Into | \`$BASE_BRANCH\` @ \`$merge_sha\` (merge commit) |
 | Implementing commits | \`$impl_shas\` |
 | Branch deleted / worktree removed | yes / yes |
-| Service | ${svc:-—}$( [ "$restart" = "1" ] && printf ' restarted from main checkout' ) |
+| Service | ${svc:-—}$( [ -n "${running// /}" ] && printf ' (restarted from main checkout:%s)' "$( printf ' %s' $running )" ) |
 | Pushed | $pushed |"
   log "✔ $name merged into $BASE_BRANCH @ $merge_sha — implementing commits: $impl_shas"
 }
@@ -927,8 +968,9 @@ clean_repos() {
       [ -e "$entry" ] || continue
       if git -C "$repo" worktree list --porcelain | grep -qx "worktree $entry"; then
         if [ "$FORCE" = "1" ]; then
-          local svc; svc="$(service_for_repo "$repo")"
-          [ -n "$svc" ] && [ "$(service_cwd "$svc")" = "$entry" ] && { "$STACK" stop "$svc" >&2 || true; }
+          local under; under="$(services_under "$entry" | tr '\n' ' ')"
+          # shellcheck disable=SC2086
+          [ -n "${under// /}" ] && { "$STACK" stop $under >&2 || true; }
           remove_worktree "$repo" "$entry"; log "Removed registered worktree $entry (--force)"
         else
           log "Keeping registered worktree $entry (pass --force to remove it)"; kept=$((kept+1))
@@ -946,7 +988,9 @@ cmd_clean() {  # clean [--force] — every code-service repo known to stack.sh p
   local a repos="" f r
   for a in "$@"; do case "$a" in --force) FORCE=1 ;; *) die "Usage: dispatch.sh clean [--force]" ;; esac; done
   if [ -x "$STACK" ] && [ -f "$CONF" ]; then
-    while IFS='|' read -r _ r kind; do [ "$kind" = code ] && [ -d "$r/.git" ] && repos="$repos $r"; done < <("$STACK" repos)
+    while IFS='|' read -r _ _ kind r _; do
+      [ "$kind" = code ] && [ -e "$r/.git" ] && case " $repos " in *" $r "*) ;; *) repos="$repos $r" ;; esac
+    done < <("$STACK" repos)
   fi
   for f in "$PROMPTS_DIR"/PROMPT-*.md; do
     [ -f "$f" ] || continue
