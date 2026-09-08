@@ -16,6 +16,7 @@ Step 0 (`bootstrap-specs`) seeds this folder: a repo that already has an instruc
 ```bash
 cp repo-instructions/api.md /path/to/api/AGENTS.md
 printf '@AGENTS.md\n' > /path/to/api/CLAUDE.md
+mkdir -p /path/to/api/.github && printf 'Read AGENTS.md in the repo root before generating any output.\n' > /path/to/api/.github/copilot-instructions.md
 ```
 
 For a monorepo service the file goes into the service's own folder (`/path/to/mono/apps/api/AGENTS.md`): agents read nested instruction files when they work under that folder, and the monorepo's root instruction file stays yours.
