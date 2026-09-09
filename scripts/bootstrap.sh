@@ -9,7 +9,8 @@
 #       stack (language, framework, start/install commands, port); write spechub.conf; insert the
 #       services table into AGENTS.md; install dependencies; write one fact sheet per service.
 #   scripts/bootstrap.sh facts [<service>...]     (re)write bootstrap/facts/<service>.md for every service in spechub.conf
-#   scripts/bootstrap.sh plan                     print the spec plan: number, service, spec file, module count, split?
+#   scripts/bootstrap.sh plan [--manifest]        print the spec plan: number, service, spec file, module count, split?
+#                                                 --manifest prints the exact file list each writer must produce
 #   scripts/bootstrap.sh services                 refresh the services table in AGENTS.md from spechub.conf
 #   scripts/bootstrap.sh install [<service>...]   run each service's install command (same as scripts/stack.sh install)
 #
@@ -417,22 +418,70 @@ source_root() {  # the directory whose children are the modules: src/app (Angula
 
 count_src() { ( cd "$1" && set -f && find . $(find_prune) -type f \( $(for e in $SRC_EXT; do printf -- '-name *.%s -o ' "$e"; done) -false \) -print 2>/dev/null | wc -l | tr -d ' ' ); }
 
-facts_modules() {  # facts_modules <dir> → "name|files" for each immediate child of the source root (dirs only)
-  local dir="$1" sr; sr="$(source_root "$dir")"
-  local d
-  for d in "$dir/$sr"/*/; do
+# For a frontend, the children of the source root are technical layers (components, hooks, store,
+# utils, theme) rather than domains, so a spec split along them produces layer files instead of the
+# feature files an implementation prompt needs. When a frontend has a views/screens directory with
+# two or more populated subdirectories, that directory is the module root and the remaining children
+# of the source root are "shared layers" (documented in 00-core.md / 01-conventions.md, never split
+# into their own module files). Every other service keeps the source root as its module root.
+VIEW_DIRS="views screens"
+
+module_root() {  # module_root <dir> <group> → path (relative to <dir>) whose children are the modules
+  local dir="$1" group="$2" sr v cand d n
+  sr="$(source_root "$dir")"
+  if [ "$group" = frontend ]; then
+    for v in $VIEW_DIRS; do
+      cand="$sr/$v"; [ "$sr" = "." ] && cand="$v"
+      [ -d "$dir/$cand" ] || continue
+      n=0
+      for d in "$dir/$cand"/*/; do
+        [ -d "$d" ] || continue
+        [ "$(count_src "$d")" -gt 0 ] && n=$((n+1))
+      done
+      if [ "$n" -ge 2 ]; then printf '%s' "$cand"; return 0; fi
+    done
+  fi
+  printf '%s' "$sr"
+}
+
+dir_children() {  # dir_children <dir> <relroot> [<skip-relpath>] → "relpath|files" per populated child dir
+  local dir="$1" root="$2" skip="${3:-}" pfx d b n
+  pfx="$root/"; [ "$root" = "." ] && pfx=""
+  [ -d "$dir/$root" ] || return 0
+  for d in "$dir/$root"/*/; do
     [ -d "$d" ] || continue
-    local b; b="$(basename "$d")"
+    b="$(basename "$d")"
     case " $PRUNE_DIRS " in *" $b "*) continue ;; esac
-    local n; n="$(count_src "$d")"
-    if [ "$n" -gt 0 ]; then printf '%s|%s\n' "${sr#./}/$b" "$n" | sed 's#^/##'; fi
+    [ -n "$skip" ] && [ "$pfx$b" = "$skip" ] && continue
+    n="$(count_src "$d")"
+    [ "$n" -gt 0 ] && printf '%s%s|%s\n' "$pfx" "$b" "$n"
   done | sort
   return 0
 }
 
+facts_modules() { dir_children "$1" "$2"; }              # facts_modules <dir> <modroot>
+facts_layers() {  # facts_layers <dir> <srcroot> <modroot> — empty unless the module root was moved
+  [ "$2" = "$3" ] && return 0
+  dir_children "$1" "$2" "$3"
+}
+
+module_slug() {  # module_slug <module relpath> → the module file's base name (camelCase → kebab)
+  basename "$1" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
 ROUTE_RE='@(Get|Post|Put|Patch|Delete|Head|Options|All|Controller)\(|@(Get|Post|Put|Patch|Delete|Request)Mapping|\b(app|router|route|server|r|g|e|api|fastify|http)\.(get|post|put|patch|delete|route|all|use)\(\s*['"'"'"`/]|@(app|router|bp|api|blueprint)\.(get|post|put|patch|delete|route)\(|\[(HttpGet|HttpPost|HttpPut|HttpPatch|HttpDelete|Route)\b|HandleFunc\(|\.(GET|POST|PUT|PATCH|DELETE)\(\s*"|Route::(get|post|put|patch|delete|resource|apiResource)\(|<Route\b|^\s*(path|route):\s*['"'"'"]'
 MODEL_RE='@Schema\(|@Entity\b|@Document\b|@Table\(|@Prop\(|@Column\(|class [A-Za-z0-9_]+\((Base|BaseModel|models\.Model|Document|db\.Model)\)|new (mongoose\.)?Schema\(|sequelize\.define\(|^model [A-Za-z0-9_]+ \{|DbSet<|SchemaFactory\.createForClass|class [A-Za-z0-9_]+ < (ApplicationRecord|ActiveRecord::Base)'
-ENV_RE='(process\.env\.|process\.env\[.|import\.meta\.env\.|os\.environ\[.|os\.environ\.get\(.|os\.getenv\(.|os\.Getenv\(.|ENV\[.|env\(.|GetEnvironmentVariable\(.|\$\{|Env\.get\(.)[A-Z][A-Z0-9_]{2,}'
+# Env-var extraction is split by evidence class so the spec's table can be a mechanical union with
+# no filtering step. ENV_RE_SRC matches only real accessor syntax in source files — including the
+# indirect accessors a config layer puts in front of the environment (NestJS `configService.get`,
+# Spring `@Value("${...}")`, Viper), because a service that reads everything through one of those
+# would otherwise report an empty environment. The old combined
+# pattern also carried a bare `${` alternative, which matched every `${CONSTANT}` template literal in
+# JS/TS and put local constants (COL_GAP, WIDGET_SCRIPTS) into the sheet as env vars; `${NAME}` is a
+# real env reference in yaml/properties/toml/Dockerfile only, so it is matched there and only there.
+ENV_RE_SRC='(process\.env\.|process\.env\[.|import\.meta\.env\.|os\.environ\[.|os\.environ\.get\(.|os\.getenv\(.|os\.Getenv\(.|ENV\[.|env\(.|GetEnvironmentVariable\(.|Env\.get\(.|[Cc]onfig([Ss]ervice)?\.get(<[^>]*>)?\(.|cfg\.get(<[^>]*>)?\(.|@Value\(.\$\{|viper\.Get[A-Za-z]*\(.)[A-Z][A-Za-z0-9_]{2,}'
+ENV_RE_TMPL='\$\{[A-Z][A-Za-z0-9_]{2,}\}'
+ENV_EXCLUDE='^(PATH|HOME|PWD|SHELL|USER|LANG|LC_ALL|TZ)$|_$'   # OS-level, plus bare prefixes (`REACT_APP_`) from docs
 
 facts_routes() {
   local dir="$1"
@@ -450,12 +499,74 @@ facts_model_decls() {
   local dir="$1"
   ( cd "$dir" && set -f && grep -rInE $(prune_args) $(include_args) --include='*.prisma' -e "$MODEL_RE" . 2>/dev/null | sed 's#^\./##' | sed -E 's/^([^:]+:[0-9]+:)[[:space:]]+/\1 /' | cut -c1-200 | sort -t: -k1,1 -k2,2n ) | head -400
 }
-facts_env() {
+facts_env_src() {  # "NAME file:line" for every accessor reference in source, comment-only lines excluded
+  # All regex work stays in grep: the macOS system awk has no {n,} interval support, so awk only
+  # does string surgery. Line 1 of each pair is a `file:line:` marker, the rest are that line's matches.
   local dir="$1"
-  {
-    ( cd "$dir" && set -f && grep -rIohE $(prune_args) $(include_args) --include='*.yml' --include='*.yaml' --include='*.properties' --include='*.toml' -e "$ENV_RE" . 2>/dev/null | grep -oE '[A-Z][A-Z0-9_]{2,}$' )
-    cat "$dir"/.env.example "$dir"/.env.sample "$dir"/.env.template 2>/dev/null | grep -oE '^[A-Z][A-Z0-9_]+' || true
-  } | grep -vE '^(PATH|HOME|NODE_ENV|TZ|JSON)$' | sort -u | head -200
+  ( cd "$dir" && set -f && grep -rInE $(prune_args) $(include_args) -e "$ENV_RE_SRC" . 2>/dev/null ) \
+    | sed 's#^\./##' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*|#|--)' \
+    | grep -oE '^[^:]+:[0-9]+:|'"$ENV_RE_SRC" \
+    | awk '
+        substr($0, length($0), 1) == ":" { loc = substr($0, 1, length($0) - 1); next }
+        loc != "" {
+          k = length($0)
+          while (k > 0 && substr($0, k, 1) ~ /[A-Za-z0-9_]/) k--
+          name = substr($0, k + 1)
+          if (length(name) > 2) printf "%s %s\n", name, loc
+        }' \
+    | sort -u | head -400
+}
+facts_env_tmpl() {  # "NAME file:line" for ${NAME} in config formats where that is an env reference
+  local dir="$1"
+  ( cd "$dir" && set -f && grep -rIonE $(prune_args) --include='*.yml' --include='*.yaml' --include='*.properties' --include='*.toml' --include='Dockerfile*' -e "$ENV_RE_TMPL" . 2>/dev/null ) \
+    | sed 's#^\./##' \
+    | sed -E 's/^([^:]+):([0-9]+):\$\{([A-Za-z0-9_]+)\}$/\3 \1:\2/' \
+    | grep -E '^[A-Za-z0-9_]+ ' | sort -u | head -200
+}
+facts_env_dotenv() {  # "NAME file" for every key declared in a committed env sample
+  local dir="$1" f
+  for f in .env.example .env.sample .env.template; do
+    [ -f "$dir/$f" ] || continue
+    sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\1/p' "$dir/$f" | grep -E '^[A-Z]' | sed "s#\$# $f#"
+  done | sort -u | head -200
+}
+facts_env_canonical() {  # the union — the spec's Environment Variables table is exactly this list
+  local dir="$1"
+  { facts_env_src "$dir"; facts_env_tmpl "$dir"; facts_env_dotenv "$dir"; } \
+    | awk '{print $1}' | grep -vE "$ENV_EXCLUDE" | sort -u
+}
+# §12 makes the writer's read set closed-world: an explicit, ordered, complete file list rather than
+# "the files the fact sheet names", which left the writer deciding how deep to go (one run read 2 of
+# 28 service files, the next read all 28). Order is: entry points, then by directory, then by role
+# (route/controller → model/DTO → service/guard → module wiring → the rest), then by name.
+read_rank() {  # read_rank <relpath> → role rank inside its directory
+  case "$1" in
+    */dto/*|*.dto.*)                                           echo 3 ;;
+    *.controller.*|*.resolver.*|*[Rr]outes.*|*.router.*|*.route.*|*-routing.module.*) echo 2 ;;
+    *.schema.*|*.entity.*|*.model.*|*models.py)                echo 3 ;;
+    *.service.*|*.repository.*|*.guard.*|*.strategy.*|*.interceptor.*|*.filter.*|*.pipe.*|*.middleware.*) echo 4 ;;
+    *.module.*)                                                echo 5 ;;
+    *)                                                         echo 6 ;;
+  esac
+}
+facts_read_order() {  # facts_read_order <dir>
+  local dir="$1" rel dirkey base
+  ( cd "$dir" && set -f && find . $(find_prune) -type f \( $(for e in $SRC_EXT; do printf -- '-name *.%s -o ' "$e"; done) -false \) -print 2>/dev/null | sed 's#^\./##' ) \
+  | while IFS= read -r rel; do
+      case "$rel" in
+        *.spec.*|*.test.*|*.stories.*|*.d.ts|*.min.js) continue ;;
+        .*|*/.*) continue ;;                      # dotfile configs are listed in §9, not read as source
+      esac
+      base="$(basename "$rel")"
+      dirkey="$(dirname "$rel")"
+      case "$base" in
+        main.*|index.*|server.*|App.js|App.jsx|App.tsx|app.module.ts|_app.js|_app.tsx|Routes.js|Routes.tsx|Program.cs|manage.py)
+          case "$dirkey" in .|src|app|src/app) dirkey="!" ;; esac ;;
+      esac
+      printf '%s\t%s\t%s\n' "$dirkey" "$(read_rank "$rel")" "$rel"
+    done \
+  | sort -t"$(printf '\t')" -k1,1 -k2,2n -k3,3 | cut -f3 | head -500
 }
 facts_deps() {
   local dir="$1"
@@ -507,7 +618,7 @@ write_facts() {  # write_facts <name> <dir> <start> <port> <label> <group> <inst
   remote="$(git -C "$dir" remote get-url origin 2>/dev/null || echo '-')"
   local groot sub; groot="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")"
   sub="${dir#$groot/}"; [ "$sub" = "$dir" ] && sub=""
-  local sr; sr="$(source_root "$dir")"
+  local sr mr; sr="$(source_root "$dir")"; mr="$(module_root "$dir" "$group")"
   local instr=""; local f
   for f in CLAUDE.md AGENTS.md .github/copilot-instructions.md .cursorrules; do [ -f "$dir/$f" ] && instr="$instr $f"; done
   mkdir -p "$FACTS_DIR"
@@ -521,18 +632,45 @@ write_facts() {  # write_facts <name> <dir> <start> <port> <label> <group> <inst
     local scripts; scripts="$(facts_scripts "$dir")"
     if [ -n "$scripts" ]; then printf '### Scripts\n\n| Script | Command |\n|---|---|\n%s\n\n' "$scripts"; fi
     printf '## 3. Layout (depth 3)\n\n```text\n%s\n```\n\n' "$(facts_layout "$dir")"
-    printf '## 4. Source Modules (children of `%s`)\n\n| Module | Source files |\n|---|---|\n' "$sr"
-    local mods; mods="$(facts_modules "$dir")"
-    printf '%s\n' "$mods" | awk -F'|' 'NF {printf "| `%s` | %s |\n", $1, $2}'
+    printf '## 4. Source Modules (children of `%s`)\n\n' "$mr"
+    if [ "$mr" != "$sr" ]; then
+      printf 'This is a frontend whose `%s` directory holds the routed feature domains, so the modules are its children. The children of the source root `%s` are shared layers (§4b) and are documented in `00-core.md` / `01-conventions.md`, never as module files.\n\n' "$mr" "$sr"
+    fi
+    printf '| Module | Module file | Source files |\n|---|---|---|\n'
+    local mods; mods="$(facts_modules "$dir" "$mr")"
+    printf '%s\n' "$mods" | awk -F'|' '
+      function slug(b,   i, c, p, out) {          # camelCase → kebab-case, then lowercase
+        out = ""
+        for (i = 1; i <= length(b); i++) {
+          c = substr(b, i, 1)
+          if (c ~ /[A-Z]/ && p ~ /[a-z0-9]/) out = out "-"
+          out = out tolower(c); p = c
+        }
+        gsub(/[^a-z0-9]+/, "-", out); sub(/^-+/, "", out); sub(/-+$/, "", out)
+        return out
+      }
+      NF { n = split($1, a, "/"); printf "| `%s` | `%s.md` | %s |\n", $1, slug(a[n]), $2 }'
     printf '\nModule count: %s\n\n' "$(printf '%s\n' "$mods" | grep -c '|' || true)"
+    local layers; layers="$(facts_layers "$dir" "$sr" "$mr")"
+    if [ -n "$layers" ]; then
+      printf '### 4b. Shared layers (children of `%s`, not modules)\n\n| Layer | Source files |\n|---|---|\n' "$sr"
+      printf '%s\n' "$layers" | awk -F'|' 'NF {printf "| `%s` | %s |\n", $1, $2}'
+      printf '\n'
+    fi
     printf '## 5. Routes & Endpoints\n\n### Declarations (file:line: text)\n\n```text\n%s\n```\n\n' "$(facts_routes "$dir")"
     printf '### Route files (file-system routing, route tables)\n\n```text\n%s\n```\n\n' "$(facts_route_files "$dir")"
     printf '## 6. Data Models\n\n### Model files\n\n```text\n%s\n```\n\n### Declarations (file:line: text)\n\n```text\n%s\n```\n\n' "$(facts_model_files "$dir")" "$(facts_model_decls "$dir")"
-    printf '## 7. Environment Variables (referenced)\n\n```text\n%s\n```\n\n' "$(facts_env "$dir")"
+    printf '## 7. Environment Variables (referenced)\n\n'
+    printf '### 7a. Canonical list\n\nThe service spec'"'"'s Environment Variables table has exactly these rows, one each, alphabetical — no additions, no filtering. Evidence for every name is in 7b-7d.\n\n```text\n%s\n```\n\n' "$(facts_env_canonical "$dir")"
+    printf '### 7b. Accessor references in source (NAME file:line)\n\n```text\n%s\n```\n\n' "$(facts_env_src "$dir")"
+    printf '### 7c. `${NAME}` references in config formats (NAME file:line)\n\n```text\n%s\n```\n\n' "$(facts_env_tmpl "$dir")"
+    printf '### 7d. Declared in a committed env sample (NAME file)\n\n```text\n%s\n```\n\n' "$(facts_env_dotenv "$dir")"
+    printf 'Excluded from 7a as OS-level: `%s`.\n\n' "$ENV_EXCLUDE"
     printf '## 8. Dependencies\n\n```text\n%s\n```\n\n' "$(facts_deps "$dir")"
     printf '## 9. Config & Infra Files Present\n\n```text\n%s\n```\n\n' "$(facts_config_files "$dir")"
     printf '## 10. File Counts by Extension\n\n| Ext | Files |\n|---|---|\n%s\n\n' "$(facts_ext_counts "$dir")"
-    printf '## 11. Existing Docs\n\n%s\n' "$(facts_readme "$dir")"
+    printf '## 11. Existing Docs\n\n%s\n\n' "$(facts_readme "$dir")"
+    printf '## 12. Files To Read\n\nThe writer reads exactly this set, in this order, each file once — nothing above it, nothing below it. Entry points first, then by directory, then by role within a directory (route/controller, model/DTO, service/guard, module wiring, the rest), then by name. Tests, type declarations and minified files are excluded. Truncated at 500 entries; if the list is 500 long, say so in Known Issues & Gaps.\n\n```text\n%s\n```\n' "$(facts_read_order "$dir")"
   } > "$out"
   log "facts → ${out#$HUB_DIR/}"
 }
@@ -548,21 +686,52 @@ cmd_facts() {
   done < <(conf_services)
 }
 
+# The module file names a writer must produce, from the fact sheet's §4 table. Emitting the list
+# (not just the count) is what makes the file set checkable: a writer that folds two modules away
+# — one run dropped `common` and `schemas` from a service and with them that service's only field
+# tables — now fails the manifest check in the skill instead of shipping a silently shorter spec.
+manifest_modules() {  # manifest_modules <service> → module file base names, one per line
+  local name="$1" sheet="$FACTS_DIR/$name.md"
+  [ -f "$sheet" ] || return 0
+  sed -n '/^## 4\. Source Modules/,/^Module count:/p' "$sheet" \
+    | sed -nE 's/^\| `[^`]+` \| `([^`]+)\.md` \|.*/\1/p' | sort
+}
+
 cmd_plan() {
   load_conf
-  printf '%-4s %-22s %-28s %-8s %s\n' "NN" "SERVICE" "SPEC FILE" "MODULES" "SHAPE"
+  local manifest=0
+  [ "${1:-}" = "--manifest" ] && manifest=1
+  if [ "$manifest" = 0 ]; then
+    printf '%-4s %-22s %-28s %-8s %s\n' "NN" "SERVICE" "SPEC FILE" "MODULES" "SHAPE"
+  fi
   spec_rows | while IFS='|' read -r nn name dir label group spec; do
     [ "$spec" = "-" ] && continue
-    local mods="?" shape="single file"
+    local mods="?" shape="single file" split=0
     if [ -f "$FACTS_DIR/$name.md" ]; then
       mods="$(sed -n 's/^Module count: //p' "$FACTS_DIR/$name.md" | head -1)"
-      [ "${mods:-0}" -gt "$SPLIT_THRESHOLD" ] 2>/dev/null && shape="split: index + ${spec%.md}/ (00-core.md, 01-conventions.md, one file per module)"
+      if [ "${mods:-0}" -gt "$SPLIT_THRESHOLD" ] 2>/dev/null; then
+        split=1
+        shape="split: index + ${spec%.md}/ (00-core.md, 01-conventions.md, one file per module)"
+      fi
     else
       shape="(no fact sheet yet — run: scripts/bootstrap.sh facts)"
     fi
-    printf '%-4s %-22s %-28s %-8s %s\n' "$nn" "$name" "$spec" "$mods" "$shape"
+    if [ "$manifest" = 0 ]; then
+      printf '%-4s %-22s %-28s %-8s %s\n' "$nn" "$name" "$spec" "$mods" "$shape"
+      continue
+    fi
+    printf '%s (%s, %s)\n' "$name" "$nn" "$([ "$split" = 1 ] && echo split || echo single)"
+    printf '  %s\n' "$spec"
+    if [ "$split" = 1 ]; then
+      printf '  %s/00-core.md\n  %s/01-conventions.md\n' "${spec%.md}" "${spec%.md}"
+      manifest_modules "$name" | sed "s#^#  ${spec%.md}/#; s#\$#.md#"
+    fi
+    printf '  repo-instructions/%s.md\n\n' "$name"
   done
-  printf '\nSplit threshold: more than %s source modules (SPECHUB_SPLIT_THRESHOLD). Numbering follows spechub.conf order.\n' "$SPLIT_THRESHOLD"
+  if [ "$manifest" = 0 ]; then
+    printf '\nSplit threshold: more than %s source modules (SPECHUB_SPLIT_THRESHOLD). Numbering follows spechub.conf order.\n' "$SPLIT_THRESHOLD"
+    printf 'Exact file list per service: scripts/bootstrap.sh plan --manifest\n'
+  fi
 }
 
 usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
@@ -571,7 +740,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   init)     cmd_init "$@" ;;
   facts)    cmd_facts "$@" ;;
-  plan)     cmd_plan ;;
+  plan)     cmd_plan "$@" ;;
   services) cmd_services ;;
   install)  "$STACK" install "$@" ;;
   *) usage ;;

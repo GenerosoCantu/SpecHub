@@ -25,9 +25,10 @@
 7. [Hosting and Deployment](#7-hosting-and-deployment)
 8. [Shared Conventions](#8-shared-conventions) → `CONVENTIONS.md`
 9. [Spec Document Index](#9-spec-document-index)
-10. [Known Gaps and Technical Debt](#10-known-gaps-and-technical-debt)
-11. [Open Questions Log](#11-open-questions-log)
-12. [Pending Features](#12-pending-features) → `STATUS.md`
+10. [Cross-Service Mechanisms](#10-cross-service-mechanisms)
+11. [Known Gaps and Technical Debt](#11-known-gaps-and-technical-debt)
+12. [Open Questions Log](#12-open-questions-log)
+13. [Pending Features](#13-pending-features) → `STATUS.md`
 
 ---
 
@@ -61,9 +62,24 @@
 
 ## 3. High-Level Architecture Diagram
 
-```text
-{ASCII diagram: clients → backend services → datastores, with the direction of each call.
- One box per service id from spechub.conf; one arrow per dependency named in a spec's "Depends on".}
+<!--
+  Mermaid, not hand-drawn ASCII: a free-form drawing is different every time it is generated, so it
+  cannot be diffed between runs. This block is mechanical — one node per service in spechub.conf
+  order, one edge per "Depends on" entry, nothing else. No layout choices, no extra nodes, no
+  annotations beyond the edge labels below.
+    - node id   = the service identifier with `-` replaced by `_`
+    - node text = `{service}<br/>{framework} :{port}`
+    - subgraphs = the `group` column of spechub.conf, in first-appearance order
+    - edge      = `A --> B` for each of A's "Depends on" entries, A in spechub.conf order
+    - edge label = the one-word reason (`auth`, `config`, `publish`) only when a writer reported one
+-->
+
+```mermaid
+graph LR
+  subgraph {group}
+    {service_id}["{service}<br/>{framework} :{port}"]
+  end
+  {service_id} --> {other_service_id}
 ```
 
 ---
@@ -88,7 +104,14 @@
 
 ## 7. Hosting and Deployment
 
-{Where each service runs, process manager, CI/CD facts found in the repos (workflows, Dockerfiles). "Unknown" is a valid value.}
+<!-- One row per service, in spechub.conf order. The Hosting cell follows D8 of the service spec
+     template: first evidence that exists wins, in the order `ecosystem.config.js`, a
+     `start:dist`/deploy script, a `.github/workflows/*` file, the repo's instruction file — and the
+     Evidence cell names it. "Unknown" only when none of the four exists. -->
+
+| Service | Hosting | Evidence |
+|---------|---------|----------|
+| `{service}` | {target or Unknown} | `{file}` |
 
 ---
 
@@ -109,13 +132,52 @@ Moved to [`CONVENTIONS.md`](CONVENTIONS.md) — that file is the source of truth
 
 ---
 
-## 10. Known Gaps and Technical Debt
+## 10. Cross-Service Mechanisms
+
+<!--
+  The contracts that live between services and therefore in no single service spec: a shared file
+  path layout, a publish/consume pipeline, a token flow that spans three services, a cache both
+  sides of which are owned elsewhere. Nothing here is invented — every mechanism is built from the
+  SHARED ARTIFACTS lines of two or more writer reports, and exists only when two or more services
+  name the same artifact (a path template, a header, a JSON file, a queue). "None — no artifact is
+  named by more than one service." when nothing groups.
+
+  Granularity is fixed, not a judgment call: ONE `### 10.x` PER ARTIFACT, alphabetical by title.
+  Do not bundle several artifacts under one thematic entry — three CDN path templates are three
+  entries, not one "Published CDN artifacts". Bundling is the single largest source of run-to-run
+  drift measured so far: two runs of the same repos produced 13 entries and 8, and the bundled run
+  silently lost five service-to-service seams.
+
+  Every entry must satisfy, and `scripts/verify.sh mechanisms` enforces:
+    - all four keys present: Producer, Consumer(s), Contract, Evidence
+    - two or more DIFFERENT services from `spechub.conf` named across Producer + Consumer(s).
+      A service that both writes and reads its own artifact is not a mechanism — drop the entry.
+      "Consumers of {ENV_VAR}" is not a consumer; name the service or drop the entry.
+    - Evidence cites at least two different services: the producer side AND the consumer side.
+      Evidence that only cites the consumer is the most common failure — it means nobody checked
+      the producing repo, and the entry is a guess.
+
+  This section is the one thing a per-service pass cannot produce: each writer sees one repo, so a
+  path template written by one service and read by another is invisible to both. Without it the
+  hub documents eight services and none of the seams between them.
+-->
+
+### 10.1 {Mechanism}
+
+- **Producer:** `{service}` — {what it writes, verbatim path/header/name}
+- **Consumer(s):** `{service}` — {what it reads}
+- **Contract:** {the shared artifact, verbatim: path template, header name, file name}
+- **Evidence:** `{service}:{file:line}`, `{service}:{file:line}`
+
+---
+
+## 11. Known Gaps and Technical Debt
 
 {Consolidated from every service spec's "Known Issues & Gaps", grouped Security / Data Integrity / Operational. One line each.}
 
 ---
 
-## 11. Open Questions Log
+## 12. Open Questions Log
 
 | # | Question | Section | Status |
 |---|----------|---------|--------|
@@ -123,6 +185,6 @@ Moved to [`CONVENTIONS.md`](CONVENTIONS.md) — that file is the source of truth
 
 ---
 
-## 12. Pending Features
+## 13. Pending Features
 
 Moved to [`STATUS.md`](STATUS.md) — the live feature status board. Do not re-add the table here.

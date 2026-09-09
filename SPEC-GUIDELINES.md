@@ -5,7 +5,7 @@ This document describes what belongs in the central architecture overview (`00-a
 > **Structure rules.**
 >
 > 1. Shared conventions live in `CONVENTIONS.md`; the feature status table lives in `STATUS.md`. Write convention/status content there, never into the overview.
-> 2. A service with more than 8 source modules (`scripts/bootstrap.sh plan`) gets a **split spec**: `NN-{service}.md` is an index; the content lives in `NN-{service}/` — `00-core.md` (shared architecture), `01-conventions.md` (env, constants, shared shapes) and one `{module}.md` per module. Keep module files in the 50–400 line range; if one outgrows that, check whether it is really two modules.
+> 2. A service with more than 8 source modules (`scripts/bootstrap.sh plan`) gets a **split spec**: `NN-{service}.md` is an index; the content lives in `NN-{service}/` — `00-core.md` (shared architecture plus every shared layer in fact sheet §4b), `01-conventions.md` (env, constants, shared shapes) and one `{module}.md` per module. The file set is `scripts/bootstrap.sh plan --manifest`, exactly — never fold two modules into one file, never drop one for being "shared", never add one the manifest does not list. Keep module files under 400 lines; if one outgrows that, check whether it is really two modules. There is no minimum length — the file set comes from the manifest, so a module with two source files yields a short file. Never pad one to reach a length, and never merge two modules to avoid a short file.
 > 3. A single-file spec that grows past ~1,000 lines is split the same way at the next close-out.
 > 4. **Header rule.** The `Last updated` line is one line of at most ~200 characters naming the latest change only. Never chain `Prior (...)` entries into it — history lives in `CHANGELOG.md`.
 
@@ -21,16 +21,17 @@ The overview is the entry point for the whole platform. It documents the system 
 2. **Table of Contents** — numbered, covering every section below.
 3. **Product Summary** — one paragraph: product, audience, problem solved.
 4. **System Components** — every deployable unit grouped as client applications / backend services / data layer, with service identifier, tech stack, default port, purpose, hosting.
-5. **High-Level Architecture Diagram** — ASCII: one box per service, one arrow per dependency.
+5. **High-Level Architecture Diagram** — Mermaid `graph LR`: one node per service in `spechub.conf` order, one edge per dependency, subgraphs by group. Never hand-drawn ASCII — a free-form drawing differs on every run and cannot be diffed.
 6. **Tenancy and Data Isolation** — how tenants/accounts/workspaces are resolved and isolated; "Not applicable" for single-tenant systems.
 7. **Authentication and Authorization** — strategy across services, token flow, delegation, roles.
 8. **Service Communication** — who calls whom, public vs authenticated, shared headers, events.
 9. **Hosting and Deployment** — where each service runs; CI/CD facts found in the repos.
 10. **Shared Conventions** — pointer to `CONVENTIONS.md`.
 11. **Spec Document Index** — one row per spec file; split specs marked as indexes.
-12. **Known Gaps and Technical Debt** — consolidated from the service specs, grouped Security / Data Integrity / Operational.
-13. **Open Questions Log** — one table, one row per open architectural question.
-14. **Pending Features** — pointer to `STATUS.md`.
+12. **Cross-Service Mechanisms** — one entry per artifact named by two or more services (path template, header, JSON file, queue): producer, consumers, the verbatim contract, and the `service:file:line` evidence on both sides. Built from the writers' `SHARED ARTIFACTS` report lines; never invented. *One entry per artifact* is literal — do not bundle related artifacts under a thematic title, do not emit an entry whose producer and consumer are the same service, and do not emit one evidenced from only one side. `scripts/verify.sh mechanisms` enforces this, and `scripts/verify.sh diff` compares the resulting seam set across runs.
+13. **Known Gaps and Technical Debt** — consolidated from the service specs, grouped Security / Data Integrity / Operational.
+14. **Open Questions Log** — one table, one row per open architectural question.
+15. **Pending Features** — pointer to `STATUS.md`.
 
 ### Style and purpose
 
@@ -129,12 +130,14 @@ Each service spec describes that service's architecture, contracts, and **curren
 
 - [ ] `Last updated` one line, latest change only.
 - [ ] Every template heading present, in order.
-- [ ] Data models field by field, source order.
+- [ ] Data models field by field, source order; every persisted entity tabled, every DTO tabled or fully described under its endpoint's Request key.
 - [ ] Every route in the fact sheet appears in Endpoints / Views & Routes.
-- [ ] Every env var in the fact sheet appears in Environment Variables.
+- [ ] Environment Variables is exactly fact sheet §7a — same names, no more, no fewer.
+- [ ] Every endpoint/route record carries every key of its record type.
 - [ ] Cross-cutting patterns spelled out.
 - [ ] Known issues captured; nothing speculative inline.
-- [ ] Split specs: index File Map has one row per file; no module content in the index.
+- [ ] Split specs: the file set equals `scripts/bootstrap.sh plan --manifest`; index File Map has one row per file; no module content in the index.
+- [ ] `scripts/verify.sh all` passes.
 
 ---
 

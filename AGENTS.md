@@ -36,6 +36,7 @@ Token spend is dominated by sessions in this workspace, not by the dispatched im
 - **Model per step.** Three tiers — Light, Standard, Advanced — mapped to concrete models in `spechub.conf`. Design on Advanced; bootstrap and cascade & prompt on Standard; dispatch and close-out on Standard, forked into the `hub-ops` subagent where the tool supports it.
 - **Read only what the task needs.** When a skill is invoked, it lists its required reads — do not also open `WORKFLOW.md` or `00-architecture-overview.md`. Index files route to module files; never read a whole split spec.
 - **Delegate code reading** in service repos to a read-only exploration subagent that returns a summary, when the tool has one.
+- **Never edit a template, `SPEC-GUIDELINES.md` or `AGENTS.md` from inside a workflow step.** A step that rewrites its own contract cannot be compared to the previous run. Step 0 appends to `bootstrap/OBSERVATIONS.md`; promoting an observation into a rule is a human step between runs.
 - **Never open `CHANGELOG.md`.** Add entries with `scripts/changelog.sh add "<entry>"` (≤ 900 chars, one per feature, at close-out).
 - **Search scope.** Exclude `archive/`, `bootstrap/`, `Features/Implemented/`, `Features/Staled/` and `Prompts/Implemented/` from repo-wide greps unless the task is about history.
 - **Size caps.** Feature file ≤ 8 KB / 15 KB; prompt ≤ 8 KB / 12 KB; spec `Last updated` line ≤ ~200 chars naming the latest change only; module file 50–400 lines.
@@ -110,7 +111,8 @@ Read:
 - `SPEC-GUIDELINES.md`: what goes in the overview vs a service spec; the checklist Step 0 generates against
 - `CHANGELOG.md`: implementation history (the only document that accumulates dated log entries) — written by `scripts/changelog.sh add`, never opened in a session; older entries in `archive/CHANGELOG-archive.md`
 - `NN-{service}.md`: one spec per service (index + `NN-{service}/` directory when split) — see the Services table above
-- `bootstrap/facts/`: mechanical fact sheets per service (`scripts/bootstrap.sh facts`) — the input of Step 0; excluded from searches
+- `bootstrap/facts/`: mechanical fact sheets per service (`scripts/bootstrap.sh facts`) — the input of Step 0; excluded from searches. §4 is the module list (and §4b the shared layers a frontend does not split on), §7a the canonical env-var list, §12 the writer's complete read set
+- `bootstrap/OBSERVATIONS.md`: append-only log of template rules that did not decide a case — Step 0 writes here instead of editing a template, so one run's contract stays comparable to the next
 - `Features/`: pending feature design documents only
 - `Features/Implemented/`: archived design docs for completed features (frozen historical records)
 - `Features/Staled/`: parked feature designs — not active, not implemented (see WORKFLOW.md "Staled Features")
@@ -120,7 +122,8 @@ Read:
 - `templates/`: fill-in templates (architecture overview, conventions, status board, service spec, spec index, module file, feature file, prompt)
 - `skills/`: workspace skills — `bootstrap-specs` (Step 0), `cascade-and-prompt` (Step 2), `dispatch-prompts` (Step 3), `close-loop` (Step 4); symlinked from `.claude/`, `.github/` and `.codex/`
 - `.claude/agents/`, `.github/agents/`: `spec-writer` (Step 0 per-service writer) and `hub-ops` (the subagent Steps 3 and 4 fork into)
-- `scripts/bootstrap.sh`: Step 0 — discovers repos, detects stacks, writes `spechub.conf`, installs dependencies, writes fact sheets, prints the spec plan
+- `scripts/bootstrap.sh`: Step 0 — discovers repos, detects stacks, writes `spechub.conf`, installs dependencies, writes fact sheets, prints the spec plan (`plan --manifest` prints the exact file list each writer must produce)
+- `scripts/verify.sh`: Step 0 determinism gates — `manifest` (the file set matches the plan), `facts` (env tables match fact sheet §7a), `records` (every endpoint/route record carries every key of its type), `headings` (module files use only the closed set), `mechanisms` (every overview §10 cross-service entry has its four keys, names two or more different services, and is evidenced on both sides), `all` (those five), `diff <a> <b>` (two generated trees compared by extracted sets, not prose — including the §10 seam set, which is grouping-independent)
 - `scripts/stack.sh`: starts/stops every service listed in `spechub.conf` (`-w <branch>` runs them from a git worktree); the dispatcher drives it
 - `scripts/dispatch.sh`: Step 3/4 dispatcher — runs prompts as detached headless sessions in per-prompt worktrees (`run`, `wait`), restarts the services from those worktrees (`serve`), resumes them, marks them verified, merges them (`merge`), and deletes the worktree folders (`clean`)
 - `scripts/changelog.sh`: prepends a changelog entry (`add`) or rolls old entries into the archive (`archive`)
