@@ -26,7 +26,34 @@
       "Bash(git -C * log --oneline *)",
       "Bash(git -C * diff *)",
       "Bash(git -C * rev-parse *)",
-      "Bash(git -C * branch --show-current)"
+      "Bash(git -C * branch --show-current)",
+      "Bash(scripts/metrics.sh *)",
+      "Bash(scripts/metrics.sh report)",
+      "Bash(scripts/metrics.sh render)",
+      "Bash(scripts/metrics.sh selftest)",
+      "Bash(scripts/metrics.sh backfill)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/metrics.sh\" session --quiet"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/metrics.sh\" session --quiet"
+          }
+        ]
+      }
     ]
   }
 }

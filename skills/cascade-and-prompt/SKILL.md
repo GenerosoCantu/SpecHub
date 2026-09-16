@@ -1,6 +1,6 @@
 ---
 name: cascade-and-prompt
-description: Cascade a designed feature into the service specs and generate its stateless implementation prompts in one session (WORKFLOW.md Step 2). Use when the user asks to cascade a feature, generate/create/regenerate PROMPT-{service}-{feature}.md files, or says "step 2", "cascade", or "generate the prompts" for a designed feature.
+description: Cascade a designed feature or bug fix (FEATURE- or BUG- file) into the service specs and generate its stateless implementation prompts in one session (WORKFLOW.md Step 2). Use when the user asks to cascade a feature, generate/create/regenerate PROMPT-{service}-{feature}.md files, or says "step 2", "cascade", or "generate the prompts" for a designed feature.
 ---
 
 > **Session rule:** this step runs on a **Standard-tier** model in a fresh session (switch the model before invoking). It is transcription, not design. When the prompts are on disk, **end the session**: Step 3 starts a new one.
@@ -12,7 +12,7 @@ For a feature that has completed Design (Step 1): write its contracts into the s
 ## 1. Required reads — in this order, nothing more
 
 1. `CONVENTIONS.md` — shared conventions every spec edit and prompt inherits
-2. `Features/FEATURE-{name}.md` — the feature file (must exist in `Features/`; if it doesn't, stop and run Step 1 first; if it is in `Features/Staled/`, stop — staled designs must be re-validated and moved back before use)
+2. `Features/FEATURE-{name}.md` or `Features/BUG-{name}.md` — the feature or bug file (must exist in `Features/`; if it doesn't, stop and run Step 1 first; if it is in `Features/Staled/`, stop — staled designs must be re-validated and moved back before use)
 3. For each affected service: its spec. **Single-file spec** (`NN-{service}.md`): read it. **Split spec** (`NN-{service}.md` is an index with a `NN-{service}/` directory): read the index, `NN-{service}/00-core.md`, and **only the module file(s) this feature touches**; read `01-conventions.md` only if env/config, constants or shared shapes are involved.
 4. `STATUS.md` — to add (or find) the feature row
 5. `spechub.conf` — for each affected service, its `name` is the prompt's `Service` and the git root of its `dir` (resolved against `REPOS_ROOT`; `scripts/stack.sh repos` prints it as the 4th field) is the prompt's `Target repo`
@@ -22,9 +22,12 @@ Do NOT read every module file, `WORKFLOW.md`, `00-architecture-overview.md`, `CH
 ## 2. Preconditions — verify before touching a spec
 
 - The feature file has no unresolved items under "Open design decisions". If any remain, stop and list them to the user — nothing is cascaded, and no prompt is generated, over an open question.
+- Bug files: the `Class:` line is `A` or `B`, and "Open questions" is empty. Class A: the cited spec passage exists and states the expected behavior; if it does not, stop and tell the user the bug is Class B.
 - Cross-service features: the feature file declares an `Implementation order` line and a `Recommended model tier` per service.
 
 ## 3. Cascade (2a)
+
+**Class A bug:** skip the spec edit below — the spec is already correct. Only add the `STATUS.md` row (name prefixed `🐞 `), and record "no spec change; contracts from {cited spec passage}" as the cascade summary. **Class B bug:** cascade the "Spec change" section exactly as for a feature, markers named after the bug.
 
 Write the feature into the affected spec(s) **as if it were already implemented**, in the exact format the surrounding spec uses — module, endpoints, schema/entity, DTO/class names, state slice, views, file/storage changes. Mark every added or changed contract with a `<!-- PENDING: {feature} -->` marker (Step 4 removes them on reconciliation).
 
@@ -45,13 +48,13 @@ Every prompt MUST open with the dispatch header:
 ```markdown
 > **Target repo:** {absolute local path of the git repo root}
 > **Service:** {service id from spechub.conf}
-> **Branch:** feature/{kebab-name}
+> **Branch:** feature/{kebab-name}   <!-- fix/{kebab-name} for a BUG- file -->
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
 > **Status:** Generated   <!-- Generated → Applied → Verified -->
 > **Recommended model:** {tier} — {one-line reason, carried from the feature file}
 ```
 
-Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute path of the git root (for a monorepo, the repo, not the service folder); `Service` names the spechub.conf service, which tells the dispatcher which subtree the prompt owns and which service to restart; `Branch` is `feature/{kebab-name}` (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
+Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute path of the git root (for a monorepo, the repo, not the service folder); `Service` names the spechub.conf service, which tells the dispatcher which subtree the prompt owns and which service to restart; `Branch` is `feature/{kebab-name}`, or `fix/{kebab-name}` for a bug (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
 
 Then the body, per WORKFLOW.md Step 2b:
 
@@ -64,6 +67,7 @@ Then the body, per WORKFLOW.md Step 2b:
 - **Naming rules** — class/DTO names, state slice, route strings, verbatim from the spec
 - **Build, test, lint** — the repo's commands; lint only changed files
 - Backend prompts: input validation, auth/guard behavior, error/status semantics, required test updates
+- Bug prompts: observed vs. expected behavior, the reproduction steps, the suspected cause as a starting point (not a certainty), and a **required regression test that fails before the fix** — from the bug file's "Regression test" section
 - Frontend prompts: backend prerequisites, route/view/component changes, state updates, UX states (loading/empty/error/permission), acceptance criteria
 
 **Size and copy rules (WORKFLOW.md → Context Budget):**
@@ -75,7 +79,7 @@ Then the body, per WORKFLOW.md Step 2b:
 
 ## 5. Quality gate
 
-A prompt is complete only if a brand-new session in the target repo could implement it without asking a question or reading an unnamed file. Re-read each prompt against that bar before finishing. Do not include spec-hub file paths in the prompt body — the implementing session has no access to this workspace. Every contract in the prompt must appear, character for character, in a `PENDING`-marked spec passage written in 2a; if one does not, fix the spec, not the prompt.
+A prompt is complete only if a brand-new session in the target repo could implement it without asking a question or reading an unnamed file. Re-read each prompt against that bar before finishing. Do not include spec-hub file paths in the prompt body — the implementing session has no access to this workspace. Every contract in the prompt must appear, character for character, in a `PENDING`-marked spec passage written in 2a (for a Class A bug: in the spec passage the bug file cites); if one does not, fix the spec, not the prompt.
 
 ## 6. Finish
 

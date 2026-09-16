@@ -1,0 +1,38 @@
+# metrics/prices.tsv — model prices for scripts/metrics.sh. USD per million tokens.
+#
+# Dispatch-run costs are reported by the CLI and never use this table. Hub-session costs are
+# DERIVED from it: transcripts carry token counts, not dollars. The derivation is exact —
+# `scripts/metrics.sh selftest` recomputes every .dispatch/runs/*.json and fails if a derived
+# cost differs from the reported one by more than $0.0001.
+#
+# Cache rates are multipliers of the input price, applied by the script:
+#   cache read      cread_mult x in   (0.1 for every current model; 0.025 on Claude Fable 5.1)
+#   cache write 5m  1.25x in
+#   cache write 1h  2.0x  in
+#
+# A model with no row here still gets full token totals; its cost shows n/a and the script warns
+# once. It NEVER estimates. Add a row rather than letting a model go unpriced.
+#
+# WHAT CHANGING THIS FILE DOES: every dollar figure on METRICS.md is derived at render time, so
+# editing a price and re-running `render` re-prices all of history. The price-free columns (raw
+# tokens, ITE) do not move. That is the point of keeping usage, not dollars, as the stored truth.
+#
+# RATIOS vs LEVELS: ITE depends only on out/in and the cache multipliers, never on the price
+# level. Those ratios are uniform across the lineup today (out = 5.00x in for every model below;
+# cache read 0.1x, except 0.025x on Claude Fable 5.1), so a repricing that keeps the ratios leaves
+# every usage figure and every relative comparison intact.
+#
+# `verified` is the date the row was last checked against the provider's pricing page.
+# selftest can only confirm models that appear in .dispatch/runs/ — a hub-only model such as
+# claude-opus-5 is NOT covered by it, so re-check that row by hand when prices may have moved.
+#
+# model<TAB>in<TAB>out<TAB>cread_mult<TAB>verified
+claude-opus-5	5.00	25.00	0.1	2026-09-12
+claude-opus-4-8	5.00	25.00	0.1	2026-09-12
+claude-opus-4-7	5.00	25.00	0.1	2026-09-12
+claude-opus-4-6	5.00	25.00	0.1	2026-09-12
+claude-sonnet-5	2.00	10.00	0.1	2026-09-12
+claude-sonnet-4-6	3.00	15.00	0.1	2026-09-12
+claude-haiku-4-5	1.00	5.00	0.1	2026-09-12
+claude-fable-5-1	10.00	50.00	0.025	2026-09-12
+claude-fable-5	10.00	50.00	0.1	2026-09-12

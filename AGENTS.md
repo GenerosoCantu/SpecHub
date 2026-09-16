@@ -37,7 +37,7 @@ Token spend is dominated by sessions in this workspace, not by the dispatched im
 - **Read only what the task needs.** When a skill is invoked, it lists its required reads — do not also open `WORKFLOW.md` or `00-architecture-overview.md`. Index files route to module files; never read a whole split spec.
 - **Delegate code reading** in service repos to a read-only exploration subagent that returns a summary, when the tool has one.
 - **Never edit a template, `SPEC-GUIDELINES.md` or `AGENTS.md` from inside a workflow step.** A step that rewrites its own contract cannot be compared to the previous run. Step 0 appends to `bootstrap/OBSERVATIONS.md`; promoting an observation into a rule is a human step between runs.
-- **Never open `CHANGELOG.md`.** Add entries with `scripts/changelog.sh add "<entry>"` (≤ 900 chars, one per feature, at close-out).
+- **Never open `CHANGELOG.md`, `METRICS.md` or `metrics/ledger.jsonl`.** Add changelog entries with `scripts/changelog.sh add "<entry>"` (≤ 900 chars, one per feature, at close-out). The metrics files are written and read by `scripts/metrics.sh` — `report` prints the summary, `render` regenerates the board. An observability surface that costs context every session would defeat this budget.
 - **Search scope.** Exclude `archive/`, `bootstrap/`, `Features/Implemented/`, `Features/Staled/` and `Prompts/Implemented/` from repo-wide greps unless the task is about history.
 - **Size caps.** Feature file ≤ 8 KB / 15 KB; prompt ≤ 8 KB / 12 KB; spec `Last updated` line ≤ ~200 chars naming the latest change only; module file 50–400 lines.
 
@@ -85,14 +85,17 @@ Read:
 
 Then create or update `Features/FEATURE-{name}.md` (`templates/FEATURE-TEMPLATE.md`) before proposing implementation prompts. Cross-service features must declare an implementation order (see WORKFLOW.md Step 1).
 
+### Fixing a bug in merged, closed work (Step 1, bug variant)
+Read `WORKFLOW.md` → Bugs, then the relevant service spec (index + module file(s)). Create `Features/BUG-{name}.md` (`templates/BUG-TEMPLATE.md`), classed A (code diverges from spec — no spec edit) or B (spec wrong or silent — cascaded like an enhancement). A defect in a prompt that is still `Applied` is not a bug file: resume that prompt (`scripts/dispatch.sh resume`).
+
 ### Cascading a designed feature and generating its implementation prompts (Step 2)
 Use the `cascade-and-prompt` skill. One session does both halves in order, without stopping between them: 2a cascades the feature file into the affected spec / module file(s) and adds the `STATUS.md` row; 2b re-reads the cascaded spec from disk and generates the prompts from it, including the mandatory dispatch header (target repo, branch, prerequisites, status, model tier). Never generate a prompt before the spec edit is on disk.
 
 ### Dispatching implementation prompts (Step 3)
-Use the `dispatch-prompts` skill. It drives `scripts/dispatch.sh`, which runs every `Generated` prompt as a detached headless session of the CLI named in `spechub.conf` (`AGENT_CLI`: claude, codex or copilot) in its own git worktree of the target repo (branch from the base branch), all in parallel (`run` returns at once; `wait` blocks and reports failures), flips the prompt to `Applied`, and restarts the affected services from their worktrees (`scripts/stack.sh`). Verification stays human (`scripts/dispatch.sh verify`); follow-up fixes resume the same session (`scripts/dispatch.sh resume`).
+Use the `dispatch-prompts` skill. Human verification has two outcomes and both must be recorded: `scripts/dispatch.sh verify <prompt>` accepts, `verify <prompt> --fail "<reason>"` rejects (the prompt stays `Applied`; fix it with `resume`, which records the rejection automatically if you skipped `--fail`). It drives `scripts/dispatch.sh`, which runs every `Generated` prompt as a detached headless session of the CLI named in `spechub.conf` (`AGENT_CLI`: claude, codex or copilot) in its own git worktree of the target repo (branch from the base branch), all in parallel (`run` returns at once; `wait` blocks and reports failures), flips the prompt to `Applied`, and restarts the affected services from their worktrees (`scripts/stack.sh`). Verification stays human (`scripts/dispatch.sh verify`); follow-up fixes resume the same session (`scripts/dispatch.sh resume`).
 
 ### Implemented feature close-out and spec reconciliation (Step 4)
-Use the `close-loop` skill. It encodes the full Step 4 checklist: branch merge into the base branch (`scripts/dispatch.sh merge` — services go back to the main checkouts and the worktree folders are deleted), spec reconciliation, `STATUS.md` flip, changelog entry, feature/prompt archival, and repo-instructions sync check.
+Use the `close-loop` skill. It encodes the full Step 4 checklist: branch merge into the base branch (`scripts/dispatch.sh merge` — services go back to the main checkouts and the worktree folders are deleted), spec reconciliation, `STATUS.md` flip, changelog entry, metrics board regeneration (`scripts/metrics.sh render`), feature/prompt archival, and repo-instructions sync check.
 
 ### Reviewing or editing an existing prompt file
 Read:
@@ -107,19 +110,21 @@ Read:
 - `00-architecture-overview.md`: system map and shared architectural decisions
 - `CONVENTIONS.md`: shared conventions (API naming, entities, storage, env vars, logging, code org)
 - `STATUS.md`: live feature status board — flipped to complete in Step 4
+- `METRICS.md`: generated observability board (throughput, failure rate, per-step and per-feature usage in price-free units, API-list value per feature — dollars at list prices as a cross-model unit, not an invoice: the plan is flat-fee — and model-tier conformance) — regenerated by `scripts/metrics.sh render` at close-out; never opened in a session
+- `metrics/ledger.jsonl`: append-only event ledger behind it (one line per dispatch run, verification, merge and hub session) — **token counts are the stored truth, dollars are derived at render time**, so re-pricing `metrics/prices.tsv` re-prices all of history without touching the usage figures
 - `WORKFLOW.md`: authoritative process for Bootstrap → Design → Cascade & Prompt → Implement → Close
 - `SPEC-GUIDELINES.md`: what goes in the overview vs a service spec; the checklist Step 0 generates against
 - `CHANGELOG.md`: implementation history (the only document that accumulates dated log entries) — written by `scripts/changelog.sh add`, never opened in a session; older entries in `archive/CHANGELOG-archive.md`
 - `NN-{service}.md`: one spec per service (index + `NN-{service}/` directory when split) — see the Services table above
 - `bootstrap/facts/`: mechanical fact sheets per service (`scripts/bootstrap.sh facts`) — the input of Step 0; excluded from searches. §4 is the module list (and §4b the shared layers a frontend does not split on), §7a the canonical env-var list, §12 the writer's complete read set
 - `bootstrap/OBSERVATIONS.md`: append-only log of template rules that did not decide a case — Step 0 writes here instead of editing a template, so one run's contract stays comparable to the next
-- `Features/`: pending feature design documents only
+- `Features/`: pending feature (`FEATURE-*.md`) and bug (`BUG-*.md`) design documents only
 - `Features/Implemented/`: archived design docs for completed features (frozen historical records)
 - `Features/Staled/`: parked feature designs — not active, not implemented (see WORKFLOW.md "Staled Features")
 - `Prompts/`: active implementation prompts (each carries a repo/branch/prereq/status header)
 - `Prompts/Implemented/`: prompts for completed work
 - `repo-instructions/`: canonical copies of each service repo's instruction file (`AGENTS.md`) — seeded in Step 0, synced in Step 4 when conventions change
-- `templates/`: fill-in templates (architecture overview, conventions, status board, service spec, spec index, module file, feature file, prompt)
+- `templates/`: fill-in templates (architecture overview, conventions, status board, service spec, spec index, module file, feature file, bug file, prompt)
 - `skills/`: workspace skills — `bootstrap-specs` (Step 0), `cascade-and-prompt` (Step 2), `dispatch-prompts` (Step 3), `close-loop` (Step 4); symlinked from `.claude/`, `.github/` and `.codex/`
 - `.claude/agents/`, `.github/agents/`: `spec-writer` (Step 0 per-service writer) and `hub-ops` (the subagent Steps 3 and 4 fork into)
 - `scripts/bootstrap.sh`: Step 0 — discovers repos, detects stacks, writes `spechub.conf`, installs dependencies, writes fact sheets, prints the spec plan (`plan --manifest` prints the exact file list each writer must produce)
@@ -127,6 +132,7 @@ Read:
 - `scripts/stack.sh`: starts/stops every service listed in `spechub.conf` (`-w <branch>` runs them from a git worktree); the dispatcher drives it
 - `scripts/dispatch.sh`: Step 3/4 dispatcher — runs prompts as detached headless sessions in per-prompt worktrees (`run`, `wait`), restarts the services from those worktrees (`serve`), resumes them, marks them verified, merges them (`merge`), and deletes the worktree folders (`clean`)
 - `scripts/changelog.sh`: prepends a changelog entry (`add`) or rolls old entries into the archive (`archive`)
+- `scripts/metrics.sh`: the observability ledger and its views — `emit` records dispatch events (called by `dispatch.sh`, never by hand); `session`/`sync` record hub sessions from the Claude Code transcripts, forked subagents included (called by the `SessionStart`/`SessionEnd` hooks and by every `report`/`render`, so a session the hooks missed is counted by the next one); `report` prints a terminal summary, `render` regenerates `METRICS.md`, `backfill` seeds history, `selftest` proves the derived cost formula against every reported cost, `archive` rolls old lines out
 - `archive/`: not a source of truth — rolled changelog entries, old spec headers, samples; excluded from searches
 - `.dispatch/`, `.run/`, `.logs/`: gitignored run logs and pids written by the scripts
 

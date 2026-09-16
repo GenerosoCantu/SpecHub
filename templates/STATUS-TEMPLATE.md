@@ -3,6 +3,7 @@
   Written empty by the bootstrap-specs skill (Step 0). A row is added in Step 2a (Pending) and
   flipped to complete + moved to Shipped in Step 4c. Notes are ONE line. No history here.
   Per-service state cell: 🔄 Pending · ✅ Complete · ⏸ Staled · N/A
+  Bug-fix rows share the numbering; their name starts with "🐞 " (WORKFLOW.md → Bugs).
 -->
 
 # {Project Name} — Feature Status Board

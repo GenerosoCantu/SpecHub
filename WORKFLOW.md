@@ -10,7 +10,7 @@ This document describes the end-to-end process for bootstrapping the spec hub an
 
 ```
 0. BOOTSTRAP → Once per project (`scripts/bootstrap.sh init` + `bootstrap-specs` skill): detect the repos, write spechub.conf, extract fact sheets, generate every spec, the overview, CONVENTIONS.md, STATUS.md and repo-instructions/
-1. DESIGN    → Create Features/FEATURE-{name}.md
+1. DESIGN    → Create Features/FEATURE-{name}.md (or Features/BUG-{name}.md for a defect in closed work — see Bugs)
 2. CASCADE & PROMPT → One session, one pass (`cascade-and-prompt` skill): 2a update the relevant service spec(s) + STATUS.md row; 2b generate Prompts/PROMPT-{service}-{feature}.md (one per service) from the cascaded spec; the cascade summary comes back with the prompts
 3. IMPLEMENT → Dispatch all prompts from the hub (`dispatch-prompts` skill → `scripts/dispatch.sh`): one worktree + headless session per prompt, in parallel; services restart from the worktrees; verify by hand
 4. CLOSE     → Merge branches into the base branch (services back on main checkouts, worktree folders deleted), update specs + STATUS.md + CHANGELOG, sync repo instructions, archive feature file & prompts
@@ -33,6 +33,7 @@ Token spend in this workflow is dominated by the hub sessions in this workspace,
 | **Size caps** | Feature file ≤ 8 KB (enhancement) / ≤ 15 KB (new module). Prompt ≤ 8 KB / ≤ 12 KB. Changelog entry ≤ 900 characters. Spec `Last updated` line ≤ ~200 characters, naming the latest change only. Module file 50–400 lines. |
 | **Copy, don't retype** | Contract tables in a prompt are extracted mechanically from the cascaded spec (`sed -n`/`awk` into the prompt file), never re-authored by the model. |
 | **Never read the changelog** | `scripts/changelog.sh add "<entry>"` prepends the entry. `CHANGELOG.md` is not opened in a session. |
+| **Never read the metrics** | `METRICS.md` and `metrics/ledger.jsonl` are written and read by `scripts/metrics.sh` (`report` to look, `render` to regenerate). Neither is opened in a session — a board that costs context every session would defeat this budget. Its own numbers are the argument: hub sessions are the larger half of the usage. Dollar figures on the board are API-list value (tokens × list prices), a unit for comparing models — not what is paid, since the plan is flat-fee. A hub session's value is derived from its Claude Code transcript **plus the subagent transcripts forked from it** (the `hub-ops` fork of Steps 3/4, `Explore` agents, spec-writers), and `report`/`render` first sync every transcript on disk into the ledger, so a session whose end-of-session hook never fired is still counted. |
 | **Search scope** | Exclude `archive/`, `bootstrap/`, `Features/Implemented/`, `Features/Staled/` and `Prompts/Implemented/` from repo-wide greps unless the task is explicitly about history. |
 
 ---
@@ -76,6 +77,8 @@ A feature file should cover:
 
 **Keep the file small.** Target ≤ 8 KB for an enhancement and ≤ 15 KB for a new module: contracts and decisions, with the rationale for each decision in a few lines, not an essay. The feature file is re-read in Step 2 and archived forever, so every kilobyte here is paid several times. When the design needs facts from a service repo (how something is wired, what a schema holds today), ask an `Explore` subagent for a summary instead of reading the files into the design session. This is the one step that runs on an Advanced-tier model — end the session when the file is written.
 
+**Bugs use the same step with a smaller file.** A defect in merged, closed work gets `Features/BUG-{name}.md` (`templates/BUG-TEMPLATE.md`) instead of a feature file — see [Bugs](#bugs).
+
 > **Why a separate file?** The service spec files describe the *implemented* state of the system. Mixing in-progress design with settled implementation facts pollutes the specs and makes prompt generation unreliable. The `Features/` file is the safe workspace for thinking; once decisions are final, they graduate into the spec. The feature file is archived to `Features/Implemented/` after implementation.
 
 ---
@@ -107,7 +110,7 @@ Each prompt must be **stateless and self-contained** (`templates/PROMPT-TEMPLATE
 ```markdown
 > **Target repo:** {absolute local path of the git repo root}
 > **Service:** {service id from spechub.conf}
-> **Branch:** feature/{kebab-name}
+> **Branch:** feature/{kebab-name}   <!-- fix/{kebab-name} for a BUG- file -->
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
 > **Status:** Generated   <!-- Generated → Applied → Verified -->
 > **Recommended model:** {tier} — {one-line reason}
@@ -206,7 +209,7 @@ After the implementation is verified, do all of the following **in a single pass
 > - Never paste a running history block into the overview or a service spec. If you catch one accumulating, fold the entries back into `CHANGELOG.md` and delete the block.
 
 ### 4e. Archive the feature design file
-- Move `Features/FEATURE-{name}.md` to `Features/Implemented/`. Its *contracts* now live in the service spec, but its *design rationale* (the "why", confirmed/open decisions, alternatives considered) is not captured anywhere else and is worth keeping.
+- Move `Features/FEATURE-{name}.md` (or `BUG-{name}.md`) to `Features/Implemented/`. Its *contracts* now live in the service spec, but its *design rationale* (the "why", confirmed/open decisions, alternatives considered) is not captured anywhere else and is worth keeping.
 - Add this banner to the top of the archived file so it is never mistaken for a live document:
   ```markdown
   > **ARCHIVED — historical design record. NOT a source of truth.**
@@ -238,7 +241,9 @@ After the implementation is verified, do all of the following **in a single pass
 | Staled feature design file | `Features/Staled/FEATURE-{kebab-name}.md` | — |
 | Implementation prompt | `Prompts/PROMPT-{service}-{feature}.md` | `Prompts/PROMPT-api-notifications.md` |
 | Archived implementation prompt | `Prompts/Implemented/PROMPT-{service}-{feature}.md` | — |
+| Bug design file | `Features/BUG-{kebab-name}.md` (archived and staled like a feature file) | `Features/BUG-story-slug-collision.md` |
 | Feature branch | `feature/{kebab-name}` (unique per prompt) | `feature/notifications` |
+| Bug-fix branch | `fix/{kebab-name}` (unique per prompt) | `fix/story-slug-collision` |
 | Canonical repo instructions | `repo-instructions/{service}.md` | `repo-instructions/api.md` |
 
 ---
@@ -267,6 +272,34 @@ After the implementation is verified, do all of the following **in a single pass
 - **When to stale:** a pending feature is deprioritized indefinitely, superseded by another design, or blocked on a decision that will not be made soon. Move the file to `Features/Staled/` and add a one-line note at top: date staled + reason.
 - **Status board:** update the feature's `STATUS.md` row to `⏸ Staled` (or remove the row if it never left design). Remove any `PENDING` markers the feature added to service specs during Cascade — staled designs must not linger in the source of truth.
 - **Reviving:** a staled feature must be **re-validated before reuse**. The specs have moved since it was written; re-read the current spec / module file(s) it touches, correct the design against them, then move it back to `Features/` and restore its `STATUS.md` row to Pending. Never generate prompts directly from a staled file.
+
+---
+
+## Bugs
+
+A bug is a defect in behavior that is already merged and closed. It follows the same steps, folders, `STATUS.md` board and close-out as a feature, with a smaller file and a narrower cascade.
+
+**First, is it a bug file at all?**
+
+- **The prompt is still `Applied`** (implemented, not yet verified or merged) → no file. Fix it in the same session: `scripts/dispatch.sh resume <prompt> "<fix>"`, or `verify <prompt> --fail "<reason>"` first.
+- **The work is merged and closed** → `Features/BUG-{kebab-name}.md` from `templates/BUG-TEMPLATE.md`.
+
+**Then classify it — the class decides the cascade:**
+
+| Class | Meaning | Step 2a (cascade) | Step 2b (prompt) | Step 4 (close) |
+|---|---|---|---|---|
+| **A — code diverges from spec** | The spec already states the correct behavior; the code does not do it. | No spec edit. The bug file cites the spec passage. | Contracts are copied from the cited spec passage (no `PENDING` marker exists). | Drift check as usual; no markers to remove. Touch a spec only if the fix revealed a deviation. |
+| **B — spec is wrong or silent** | The spec describes the buggy behavior, or never covered the case. | Correct the spec as for an enhancement, with `<!-- PENDING: {bug-name} -->` markers. | As for a feature, from the `PENDING` passage. | As for a feature. |
+
+If you cannot tell which class applies, it is B: a spec that allows two readings is itself silent on the case. A Class A bug whose fix needs a new field, endpoint or view is not a bug — write a `FEATURE-` file.
+
+**Differences from a feature, in full:**
+
+- **File:** `Features/BUG-{kebab-name}.md`, ≤ 8 KB. Archived to `Features/Implemented/` and staled to `Features/Staled/` exactly like a feature file.
+- **Design session:** Step 1 still applies, but a Standard-tier model is enough for Class A; use Advanced only when the cause is unknown or the Class B correction is a design decision.
+- **Prompts:** `Prompts/PROMPT-{service}-{bug-name}.md`, branch `fix/{bug-name}`. Every bug prompt requires a regression test that fails before the fix.
+- **Status board:** the row takes the next sequential number, like a feature; its name starts with `🐞 ` (e.g. `🐞 Story slug collision`).
+- **Changelog:** the entry starts with `Fix:` (e.g. `Fix: Story slug collision (#74) closed in api: …`).
 
 ---
 

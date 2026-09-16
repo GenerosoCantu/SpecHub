@@ -246,13 +246,13 @@ cmd_restart() { cmd_stop "$@"; echo; cmd_start "$@"; }
 
 cmd_status() {
   worktree_banner "$ALL_SERVICES"
-  printf "%-13s %-34s %-6s %-9s %-8s %s\n" SERVICE NAME PORT STATE PID PORT-STATE
+  printf "%-24s %-42s %-6s %-9s %-8s %s\n" SERVICE NAME PORT STATE PID PORT-STATE
   local n pid state port listen
   for n in $ALL_SERVICES; do
     port="$(svc_port "$n")"
     if pid="$(running_pid "$n")"; then state="${C_GREEN}running${C_RESET}"; else pid="-"; state="${C_DIM}stopped${C_RESET}"; fi
     if [ -n "$(port_pid "$port")" ]; then listen="${C_GREEN}listening${C_RESET}"; else listen="${C_DIM}closed${C_RESET}"; fi
-    printf "%-13s %-34s %-6s %-20s %-8s %s\n" "$n" "$(svc_label "$n")" "$port" "$state" "$pid" "$listen"
+    printf "%-24s %-42s %-6s %-20s %-8s %s\n" "$n" "$(svc_label "$n")" "$port" "$state" "$pid" "$listen"
   done
 }
 
@@ -281,7 +281,7 @@ cmd_list() {
   local n
   for n in $ALL_SERVICES; do
     local mark=""; on_worktree "$n" && mark="${C_YELLOW}[wt]${C_RESET} "
-    printf "%-13s %-34s http://localhost:%-5s %s\n" "$n" "$(svc_label "$n")" "$(svc_port "$n")" "$mark${C_DIM}$(svc_dir "$n")${C_RESET}"
+    printf "%-24s %-42s http://localhost:%-5s %s\n" "$n" "$(svc_label "$n")" "$(svc_port "$n")" "$mark${C_DIM}$(svc_dir "$n")${C_RESET}"
   done
 }
 

@@ -1,6 +1,6 @@
 ---
 name: close-loop
-description: Close out an implemented feature (WORKFLOW.md Step 4) — merge Verified feature branches into the base branch, reconcile specs, flip STATUS.md, update CHANGELOG, archive feature file and prompts, sync repo instructions. Use when the user says a feature is implemented/verified and asks to "close the loop", "reconcile", "close out", or "step 4".
+description: Close out an implemented feature or bug fix (WORKFLOW.md Step 4) — merge Verified feature branches into the base branch, reconcile specs, flip STATUS.md, update CHANGELOG, archive feature file and prompts, sync repo instructions. Use when the user says a feature is implemented/verified and asks to "close the loop", "reconcile", "close out", or "step 4".
 context: fork
 agent: hub-ops
 ---
@@ -18,7 +18,7 @@ Reconcile the spec hub with what was actually built. All sub-steps happen in thi
 
 Deviations come from two places: what the user stated in the request, and each prompt's **Dispatch Run Report** section (the agent summary lists `DEVIATIONS` reported at implementation time). You cannot ask the user mid-run — work from those two sources plus the drift check in step 2. Deviations are absorbed into the spec, not ignored.
 
-**Required reads — nothing more:** `STATUS.md`, the feature file, the feature's prompt files, and the affected spec / module file(s) named in the prompts. Do not read `WORKFLOW.md`, `CHANGELOG.md`, `00-architecture-overview.md`, `bootstrap/`, or any `Implemented/` folder.
+**Required reads — nothing more:** `STATUS.md`, the feature file (`FEATURE-{name}.md` or `BUG-{name}.md`), the feature's prompt files, and the affected spec / module file(s) named in the prompts. Do not read `WORKFLOW.md`, `CHANGELOG.md`, `00-architecture-overview.md`, `bootstrap/`, or any `Implemented/` folder.
 
 ## 1. Merge the feature branches into the base branch
 
@@ -58,6 +58,7 @@ Do not reconcile from memory or from the user's description alone.
 - Update the affected spec / module file(s) to match what was actually built — field names, endpoint shapes, component names. Reality wins over the original plan.
 - Split specs: edit module files; touch the index File Map only if a module was added, renamed, or removed.
 - Remove the feature's `<!-- PENDING: ... -->` markers.
+- **Class A bug** (no spec change was cascaded): touch a spec only if the drift check found a deviation; otherwise leave every spec and its `Last updated` line alone.
 - Replace each touched spec's `Last updated` line with **one line of at most ~200 characters naming this feature only**, e.g. `> **Last updated:** 2026-09-06 — Site Texts (#69) implemented and closed: \`03-api/site-texts.md\`. History lives in \`CHANGELOG.md\`.` Never keep or add a `Prior (...)` chain. Do NOT append history entries (single-log rule: dated logs live only in `CHANGELOG.md`).
 
 ## 4. Flip the status board
@@ -74,11 +75,22 @@ Do not reconcile from memory or from the user's description alone.
 scripts/changelog.sh add "<Feature> (#n) implemented and closed across <services>: what shipped; notable deviations. (api@a1b2c3d, web@e4f5a6b)"
 ```
 
+- A bug entry starts with `Fix:` — e.g. `Fix: Story slug collision (#74) closed in api: …`.
 - One entry per feature, **≤ 900 characters** (the script refuses longer ones): what shipped, the deviations that matter, and the traceability refs from step 1's **Merged** entries (implementing commit SHA(s) or PR link(s) per service repo). Rationale stays in the archived feature file; the dispatch trace stays in the archived prompt.
 
-## 6. Archive the feature file
+## 6. Regenerate the metrics board
 
-- Move `Features/FEATURE-{name}.md` → `Features/Implemented/`, adding this banner at the top:
+- Do **not** open `METRICS.md` or `metrics/ledger.jsonl`. Run:
+
+```bash
+scripts/metrics.sh render
+```
+
+- One command, zero reads: it first syncs every hub session transcript into the ledger (this session included, forked subagents and all), then rebuilds the board from that ledger together with the events `dispatch.sh` has been writing all along. Nothing to review, nothing to paste into a spec. If it warns about a missing price row or a stale one, say so in the final report — do not edit `metrics/prices.tsv` from inside this step.
+
+## 7. Archive the feature file
+
+- Move `Features/FEATURE-{name}.md` (or `BUG-{name}.md`) → `Features/Implemented/`, adding this banner at the top:
 
 ```markdown
 > **ARCHIVED — historical design record. NOT a source of truth.**
@@ -86,16 +98,16 @@ scripts/changelog.sh add "<Feature> (#n) implemented and closed across <services
 > Do not edit; this captures the original design reasoning only.
 ```
 
-## 7. Archive the prompt(s)
+## 8. Archive the prompt(s)
 
 - Move each `Prompts/PROMPT-{service}-{feature}.md` → `Prompts/Implemented/`. Keep the **Dispatch Run Report** section intact — it is the implementation trace (sessions, commits, merge).
 
-## 8. Sync repo instructions if conventions changed
+## 9. Sync repo instructions if conventions changed
 
 - If the feature changed any shared convention (naming, module layout, storage patterns, env conventions): update `CONVENTIONS.md`, update the affected canonical file(s) in `repo-instructions/`, and remind the user to copy them into the service repo(s). The hub copies are canonical.
 
-## 9. Finish
+## 10. Finish
 
-Report (under 40 lines — it is all the main session receives): branches merged (merge commits per repo, pushed or not), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), archived files, and any convention syncs performed. Flag anything the specs still don't capture.
+Report (under 40 lines — it is all the main session receives): branches merged (merge commits per repo, pushed or not), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), metrics board regenerated (plus any price-row warning it printed), archived files, and any convention syncs performed. Flag anything the specs still don't capture.
 
 The loop is closed. The next feature's design (Step 1) starts in a **new session** on an Advanced-tier model.

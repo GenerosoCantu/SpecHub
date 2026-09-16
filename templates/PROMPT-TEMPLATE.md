@@ -2,7 +2,7 @@
 
 > **Target repo:** {absolute local path of the git repo root that holds the service}
 > **Service:** {service id — the `name` column of spechub.conf}
-> **Branch:** feature/{kebab-name}
+> **Branch:** feature/{kebab-name}   <!-- fix/{kebab-name} for a bug -->
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
 > **Status:** Generated   <!-- Generated → Applied → Verified -->
 > **Recommended model:** {Light | Standard | Advanced} — {one-line reason}

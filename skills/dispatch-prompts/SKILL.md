@@ -77,6 +77,16 @@ The script never flips `Verified`, and neither do you. The services are already 
 scripts/dispatch.sh verify PROMPT-api-x
 ```
 
+**Verification has two outcomes, and both must be recorded.** If the user rejects the work, run:
+
+```bash
+scripts/dispatch.sh verify PROMPT-api-x --fail "the dropdown writes a string, not a boolean"
+```
+
+That keeps the prompt `Applied` (the correct state for "implemented, not accepted" — never flip it back to `Generated`, which would let `run` start a fresh session and lose the resume thread), appends a **Verification failed** entry, and records the rejection. Then fix it with `resume` as in §4.
+
+Recording the rejection is not bookkeeping for its own sake: nothing else writes the failure side, so skipping it makes the pass rate 100% by construction and the board worthless. `resume` on an `Applied` prompt that has no verification since its last run records the failure for you automatically (`--no-verify-fail` opts out), so the honest path is also the default one.
+
 Merging into the base branch is Step 4 (`close-loop` skill → `scripts/dispatch.sh merge`), not part of this skill.
 
 ## 6. Finish

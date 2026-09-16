@@ -11,6 +11,7 @@
 #   scripts/dispatch.sh resume <prompt> "<message>"  continue a prompt's session (bug fixes, follow-ups; detached)
 #   scripts/dispatch.sh wait [--timeout <s>]         block until no session runs; exit 0 ok / 1 failed / 2 still running
 #   scripts/dispatch.sh verify <prompt>              human gate: flip Applied → Verified
+#   scripts/dispatch.sh verify <prompt> --fail "<why>"  human gate: record a REJECTION (stays Applied)
 #   scripts/dispatch.sh serve <prompt>|--all         (re)start the stack with each prompt's service on its worktree
 #   scripts/dispatch.sh merge <prompt> [--push]      Step 4: merge branch into the base branch, remove worktree, delete
 #                                                    branch, move the service back to the main checkout
@@ -24,6 +25,10 @@
 # Add --dry-run to `run` to print the plan without touching any repo.
 # Add --wait to `run`/`resume` to block until the sessions finish (same as running `wait` after).
 # Add --no-serve to `run`/`resume` to skip the automatic service restart.
+# Add --no-verify-fail to `resume` to suppress the automatic verification-failure record.
+#
+# Every run, resume, verification and merge is also recorded in metrics/ledger.jsonl by
+# scripts/metrics.sh, which turns it into METRICS.md. Recording never fails a dispatch.
 #
 # `run` and `resume` return immediately: the sessions run under a detached supervisor (own process
 # group, reparented to init), so the terminal or agent that launched them can go away. Every session
@@ -119,6 +124,13 @@ log()  { printf '[dispatch] %s\n' "$*" >&2; }
 die()  { printf '[dispatch] ERROR: %s\n' "$*" >&2; exit 1; }
 now()  { date '+%Y-%m-%d %H:%M'; }
 stamp(){ date '+%Y%m%d-%H%M%S'; }
+# BSD date has no %N, so milliseconds come from python3 (already required by the hub scripts).
+now_ms() { python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo $(( $(date +%s) * 1000 )); }
+
+# Record one event in the metrics ledger. Never fails the caller: observability must not be able
+# to break a dispatch. See scripts/metrics.sh.
+METRICS="$HUB_DIR/scripts/metrics.sh"
+metrics() { [ -x "$METRICS" ] && "$METRICS" emit "$@" || true; }
 
 find_agent() {  # path of the headless CLI selected by AGENT_CLI
   local bin="${DISPATCH_AGENT_BIN:-${AGENT_BIN:-}}"
@@ -595,6 +607,9 @@ record_abort() {  # record_abort <prompt-file> <run_id> <kind> <why>
 | Diagnosis | the session never returned; check the CLI's own session store (claude: ~/.claude/projects/, codex: ~/.codex/sessions/) |
 | Leftover changes stashed | $stashed |
 | Log | \`.dispatch/runs/$run_id.json\` |"
+  metrics "$( [ "$kind" = resume ] && echo dispatch_resume || echo dispatch_run )" \
+    --prompt "$file" --run-id "$run_id" --agent "$AGENT_CLI" --result aborted \
+    --branch "$branch" --repo "$repo" --diagnosis "$why"
   log "✖ $(basename "$file" .md) ABORTED — $why"
 }
 
@@ -649,6 +664,7 @@ cmd__worker() {
   local svc; svc="$(prompt_service "$file")"
   local preamble; preamble="$(system_preamble "$name" "$repo" "$branch" "$wt" "$svc")"
   local rc=0 base_sha; base_sha="$(git -C "$repo" rev-parse --short "$BASE_BRANCH")"
+  local t0; t0="$(now_ms)"
   if [ "$kind" = "resume" ]; then
     local sid; sid="$(grep -E '^\| Session ID \|' "$file" | tail -1 | sed -E 's/.*`([^`]+)`.*/\1/' || true)"
     log "↻ resuming $name (session $sid)"
@@ -657,6 +673,7 @@ cmd__worker() {
     log "▶ $name → $wt ($AGENT_CLI, model: $model)"
     run_headless "$wt" "$model" "$out_json" "$out_txt" -- "$file" "$preamble" || rc=$?
   fi
+  local wall_ms=$(( $(now_ms) - t0 ))
   trap - TERM INT HUP
 
   # Safety net: the agent is told to commit; if it left changes behind, commit them so nothing is lost.
@@ -695,6 +712,16 @@ cmd__worker() {
 | Log | \`${out_json#$HUB_DIR/}\` |
 | Agent summary | $summary |"
   fi
+
+  local n_commits; n_commits="$(git -C "$wt" rev-list --count "$BASE_BRANCH..HEAD" 2>/dev/null || echo 0)"
+  # An array, not ${diag:+...}: a diagnosis is a sentence and would word-split into many args.
+  local mdiag=(); [ -n "$diag" ] && mdiag=(--diagnosis "$diag")
+  metrics "$( [ "$kind" = resume ] && echo dispatch_resume || echo dispatch_run )" \
+    --prompt "$file" --run-id "$run_id" --json "$out_json" --agent "$AGENT_CLI" \
+    --model "$model" --tier "$(header_field "$file" "Recommended model" | awk '{print $1}')" \
+    --repo "$repo" --branch "$branch" --wall-ms "$wall_ms" --commits "$n_commits" \
+    --result "$( [ "$result" = ok ] && echo ok || echo error )" \
+    "${mdiag[@]+"${mdiag[@]}"}"
 
   rm -f "$(active_file "$file")"
   if [ "$result" = "ok" ]; then
@@ -798,7 +825,7 @@ cmd_run() {
 cmd_resume() {
   local do_wait=0 args=() a
   for a in "$@"; do
-    case "$a" in --no-serve) SERVE=none ;; --wait) do_wait=1 ;; *) args+=("$a") ;; esac
+    case "$a" in --no-serve) SERVE=none ;; --wait) do_wait=1 ;; --no-verify-fail) NO_VERIFY_FAIL=1 ;; *) args+=("$a") ;; esac
   done
   set -- "${args[@]+"${args[@]}"}"
   local file; file="$(resolve_prompt "${1:-}")"; shift || true
@@ -811,6 +838,22 @@ cmd_resume() {
   local repo branch wt
   repo="$(repo_path "$file")"; branch="$(branch_name "$file")"; wt="$(worktree_path "$repo" "$branch")"
   [ -d "$wt" ] || die "Worktree missing: $wt (was it merged already?)"
+
+  # Resuming an Applied prompt whose last report entry is still the run itself means a human
+  # looked at the work and found it wanting — that IS a failed verification. Record it, or the
+  # pass rate stays 100% by construction: nothing else ever writes the failure side.
+  if [ "${NO_VERIFY_FAIL:-0}" != "1" ] && [ "$(prompt_status "$file")" = "Applied" ]; then
+    case "$(last_report_kind "$file")" in
+      Run|Resume)
+        log "note: recording this as a verification failure (pass --no-verify-fail to skip)."
+        append_report "$file" "Verification failed" \
+"| Checked by | $(git -C "$HUB_DIR" config user.name 2>/dev/null || whoami) |
+| Reason | $(printf '%s' "$message" | head -c 200 | tr '\n' ' ' | sed 's/|/\\|/g') |
+| Recorded from | \`dispatch.sh resume\` |"
+        metrics verify --prompt "$file" --result fail \
+          --by "$(git -C "$HUB_DIR" config user.name 2>/dev/null || whoami)" --reason "$message" ;;
+    esac
+  fi
   [ "$TRUST" = "1" ] && [ "$AGENT_CLI" = claude ] && ensure_trust "$wt" "$repo"
   find_agent >/dev/null
   mkdir -p "$RUNS_DIR"
@@ -851,12 +894,40 @@ cmd_wait() {
   return 1
 }
 
+# Kind of the newest Dispatch Run Report entry ("Run" | "Resume" | "Verified" | "Verification failed" | "Merged").
+last_report_kind() { grep -E '^### ' "$1" 2>/dev/null | tail -1 | sed -E 's/^### (.+) — .*/\1/'; }
+
 cmd_verify() {
-  local file; file="$(resolve_prompt "${1:-}")"
-  local st; st="$(prompt_status "$file")"
+  local file="" fail=0 reason="" a
+  for a in "$@"; do
+    case "$a" in
+      --fail) fail=1 ;;
+      *) if [ "$fail" = "1" ] && [ -z "$reason" ] && [ -n "$file" ]; then reason="$a"
+         elif [ -z "$file" ]; then file="$(resolve_prompt "$a")"
+         else reason="$a"; fi ;;
+    esac
+  done
+  [ -n "$file" ] || die 'Usage: dispatch.sh verify <prompt> [--fail "<reason>"]'
+  local st who; st="$(prompt_status "$file")"
+  who="$(git -C "$HUB_DIR" config user.name 2>/dev/null || whoami)"
+
+  if [ "$fail" = "1" ]; then
+    # A failed verification does NOT move the status: 'Applied' already means implemented but not
+    # accepted. Flipping back to Generated would let `run` start a fresh session and lose the thread.
+    [ -n "$reason" ] || die 'verify --fail needs a reason: dispatch.sh verify <prompt> --fail "<what is wrong>"'
+    append_report "$file" "Verification failed" \
+"| Checked by | $who |
+| Reason | $(printf '%s' "$reason" | tr '\n' ' ' | sed 's/|/\\|/g') |"
+    metrics verify --prompt "$file" --result fail --by "$who" --reason "$reason"
+    log "✖ $(basename "$file") verification FAILED — stays Applied. Fix with:"
+    log "   scripts/dispatch.sh resume $(basename "$file" .md) \"$reason\""
+    return 0
+  fi
+
   [ "$st" = "Applied" ] || die "$(basename "$file") is '$st' — only Applied prompts can be marked Verified."
   set_status "$file" "Verified"
-  append_report "$file" "Verified" "| Verified by | $(git -C "$HUB_DIR" config user.name 2>/dev/null || whoami) |"
+  append_report "$file" "Verified" "| Verified by | $who |"
+  metrics verify --prompt "$file" --result pass --by "$who"
   log "✔ $(basename "$file") → Verified"
 }
 
@@ -928,6 +999,8 @@ merge_one() {  # merge_one <prompt-file>
 | Branch deleted / worktree removed | yes / yes |
 | Service | ${svc:-—}$( [ -n "${running// /}" ] && printf ' (restarted from main checkout:%s)' "$( printf ' %s' $running )" ) |
 | Pushed | $pushed |"
+  metrics merge --prompt "$file" --base "$BASE_BRANCH" --merge-sha "$merge_sha" \
+    --impl-shas "$(printf '%s' "$impl_shas" | tr -d '`,')" --pushed "$pushed"
   log "✔ $name merged into $BASE_BRANCH @ $merge_sha — implementing commits: $impl_shas"
 }
 
