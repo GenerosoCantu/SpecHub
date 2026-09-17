@@ -2,13 +2,13 @@
 
 A one-page view of `WORKFLOW.md` for people: which step, which session, which model. `WORKFLOW.md` has the full rules, and it wins if the two ever disagree.
 
-**Model tiers → Claude Code models.** The defaults in `scripts/dispatch.sh` apply; you can override them in `spechub.conf` (`MODEL_LIGHT` / `MODEL_STANDARD` / `MODEL_ADVANCED`). Switch models in the session with `/model <alias>`.
+**Model tiers → Claude Code and GitHub Copilot models.** The defaults in `scripts/dispatch.sh` apply; you can override them in `spechub.conf` (`MODEL_LIGHT` / `MODEL_STANDARD` / `MODEL_ADVANCED`). Switch models in the session with `/model <alias>`.
 
-| Tier | Claude Code alias | Resolves to |
-|---|---|---|
-| Light | `haiku` | Claude Haiku 4.5 |
-| Standard | `sonnet` | Claude Sonnet 5 |
-| Advanced | `opus` | Claude Opus 5 |
+| Tier | Claude Code alias | Claude Code resolves to | GitHub Copilot model |
+|---|---|---|---|
+| Light | `haiku` | Claude Haiku 4.5 | `gpt-5-mini` |
+| Standard | `sonnet` | Claude Sonnet 5 | `gpt-5` |
+| Advanced | `opus` | Claude Opus 5 | `claude-opus-4.1` |
 
 ---
 
