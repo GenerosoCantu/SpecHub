@@ -14,7 +14,9 @@
 #   scripts/dispatch.sh verify <prompt> --fail "<why>"  human gate: record a REJECTION (stays Applied)
 #   scripts/dispatch.sh serve <prompt>|--all         (re)start the stack with each prompt's service on its worktree
 #   scripts/dispatch.sh merge <prompt> [--push]      Step 4: merge branch into the base branch, remove worktree, delete
-#                                                    branch, move the service back to the main checkout
+#                                                    branch, reinstall dependencies in the main checkout when the
+#                                                    merge changed a manifest/lockfile, move the service back to the
+#                                                    main checkout
 #   scripts/dispatch.sh merge --all [--push]         merge every Verified prompt
 #   scripts/dispatch.sh clean [--force]              delete every <repo>-worktrees/ leftover (registered ones need --force)
 #
@@ -956,6 +958,31 @@ cmd_serve() {
   serve_pairs "${pairs[@]}"
 }
 
+# Dependency manifests and lockfiles: a merge that changes one leaves the main checkout's installed
+# dependencies behind the code (worktrees link or install their own — the main checkout never saw the install).
+DEP_MANIFESTS='package.json|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|pnpm-workspace.yaml|requirements[^/]*\.txt|pyproject.toml|poetry.lock|uv.lock|Pipfile|Pipfile.lock|Gemfile|Gemfile.lock|composer.json|composer.lock|go.mod|go.sum|pom.xml|build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts|Cargo.toml|Cargo.lock|[^/]*\.csproj|packages.lock.json'
+
+# install_changed_deps <repo> <from-sha> — run the install command (spechub.conf) of every service of <repo> whose
+# dependency manifests changed between <from-sha> and HEAD. A root-level manifest (workspace root, shared lockfile)
+# counts for every service of the repo. Prints the installed service names; nothing when no manifest changed.
+install_changed_deps() {
+  local repo="$1" from="$2" changed name kind root sub real did=""
+  [ -x "$STACK" ] && [ -f "$CONF" ] || return 0
+  changed="$(git -C "$repo" diff --name-only "$from" HEAD 2>/dev/null | grep -E "(^|/)($DEP_MANIFESTS)\$" || true)"
+  [ -n "$changed" ] || return 0
+  real="$(cd "$repo" && pwd -P)"
+  while IFS='|' read -r name _ kind root sub; do
+    [ "$kind" = "code" ] && [ -d "$root" ] && [ "$(cd "$root" && pwd -P)" = "$real" ] || continue
+    if [ -n "$sub" ]; then
+      printf '%s\n' "$changed" | awk -v s="$sub/" 'index($0,s)==1 || index($0,"/")==0 {f=1} END{exit !f}' || continue
+    fi
+    log "Dependency manifest changed — installing $name in the main checkout"
+    "$STACK" install "$name" >&2 || log "WARNING: install failed for $name — run: $STACK install $name"
+    did="$did $name"
+  done < <("$STACK" repos)
+  printf '%s' "${did# }"
+}
+
 merge_one() {  # merge_one <prompt-file>
   local file="$1" name repo branch wt
   name="$(basename "$file" .md)"
@@ -968,6 +995,7 @@ merge_one() {  # merge_one <prompt-file>
 
   local cur; cur="$(git -C "$repo" branch --show-current)"
   [ "$cur" = "$BASE_BRANCH" ] || { log "Checking out $BASE_BRANCH in $(basename "$repo") (was $cur)"; git -C "$repo" checkout --quiet "$BASE_BRANCH"; }
+  local pre_sha; pre_sha="$(git -C "$repo" rev-parse HEAD)"
 
   log "Merging $branch → $BASE_BRANCH in $(basename "$repo")"
   if ! git -C "$repo" merge --no-ff --no-edit -m "merge: $branch ($name)" "$branch"; then
@@ -985,6 +1013,7 @@ merge_one() {  # merge_one <prompt-file>
   [ -n "${running// /}" ] && { log "Stopping$( printf ' %s' $running ) (running from the worktree)"; "$STACK" stop $running >&2 || true; }
   remove_worktree "$repo" "$wt"
   git -C "$repo" branch -d "$branch"
+  local installed; installed="$(install_changed_deps "$repo" "$pre_sha")"
   if [ -n "${running// /}" ] && [ "$SERVE" != "none" ]; then
     # shellcheck disable=SC2086
     log "Starting$( printf ' %s' $running ) from the main checkout"; "$STACK" start $running >&2 || log "WARNING: could not start$( printf ' %s' $running )"
@@ -998,6 +1027,7 @@ merge_one() {  # merge_one <prompt-file>
 | Implementing commits | \`$impl_shas\` |
 | Branch deleted / worktree removed | yes / yes |
 | Service | ${svc:-—}$( [ -n "${running// /}" ] && printf ' (restarted from main checkout:%s)' "$( printf ' %s' $running )" ) |
+| Dependencies installed (main checkout) | ${installed:-no manifest change} |
 | Pushed | $pushed |"
   metrics merge --prompt "$file" --base "$BASE_BRANCH" --merge-sha "$merge_sha" \
     --impl-shas "$(printf '%s' "$impl_shas" | tr -d '`,')" --pushed "$pushed"
