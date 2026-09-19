@@ -13,15 +13,17 @@
 #   scripts/dispatch.sh verify <prompt>              human gate: flip Applied → Verified
 #   scripts/dispatch.sh verify <prompt> --fail "<why>"  human gate: record a REJECTION (stays Applied)
 #   scripts/dispatch.sh serve <prompt>|--all         (re)start the stack with each prompt's service on its worktree
-#   scripts/dispatch.sh merge <prompt> [--push]      Step 4: merge branch into the base branch, remove worktree, delete
+#   scripts/dispatch.sh merge <prompt>               Step 4: merge branch into the base branch, remove worktree, delete
 #                                                    branch, reinstall dependencies in the main checkout when the
 #                                                    merge changed a manifest/lockfile, move the service back to the
-#                                                    main checkout
-#   scripts/dispatch.sh merge --all [--push]         merge every Verified prompt
+#                                                    main checkout, push the base branch (MERGE_PUSH in spechub.conf; --push / --no-push override)
+#   scripts/dispatch.sh merge --all                  merge every Verified prompt
 #   scripts/dispatch.sh clean [--force]              delete every <repo>-worktrees/ leftover (registered ones need --force)
+#   scripts/dispatch.sh deps <repo> <from-sha>       run the install command of every service of <repo> whose dependency
+#                                                    manifests changed between <from-sha> and HEAD (scripts/instance.sh pull)
 #
 # <prompt> is a file name in Prompts/ (with or without .md) or a path to a prompt file. Its dispatch header
-# names the Target repo (a git root), the Branch, and — for monorepos — the Service it implements (a `name`
+# names the Target repo (a git root — absolute, or relative to REPOS_ROOT), the Branch, and — for monorepos — the Service it implements (a `name`
 # from spechub.conf whose `dir` lies inside that repo); without a Service line the service is inferred from
 # the file name (PROMPT-{service}-{feature}.md) or, for a single-service repo, from the repo itself.
 # Add --dry-run to `run` to print the plan without touching any repo.
@@ -75,6 +77,10 @@ HUB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONF="$HUB_DIR/spechub.conf"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
+# shellcheck disable=SC1091
+[ -f "$HUB_DIR/spechub.local.conf" ] && . "$HUB_DIR/spechub.local.conf"
+REPOS_ROOT="${REPOS_ROOT:-$HUB_DIR/..}"
+case "$REPOS_ROOT" in /*) ;; *) REPOS_ROOT="$(cd "$HUB_DIR/$REPOS_ROOT" 2>/dev/null && pwd || echo "$HUB_DIR/$REPOS_ROOT")" ;; esac
 PROMPTS_DIR="${DISPATCH_PROMPTS_DIR:-$HUB_DIR/Prompts}"
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 RUNS_DIR="${DISPATCH_RUNS_DIR:-$HUB_DIR/.dispatch/runs}"
@@ -115,7 +121,11 @@ Bash(for *),Bash(while *),Bash(if *),Bash(test *),Bash(xargs *),Bash(sort *),Bas
 ALLOWED_TOOLS="${DISPATCH_ALLOWED_TOOLS:-$DEFAULT_ALLOWED_TOOLS}"
 
 DRY_RUN=0
-PUSH=0
+# Push the base branch after each merge: MERGE_PUSH=1 in spechub.conf (DISPATCH_PUSH env overrides;
+# `merge --push` / `merge --no-push` override both). The base is fast-forwarded to origin before a
+# merge that will be pushed, so the push can never be a non-fast-forward.
+PUSH="${DISPATCH_PUSH:-${MERGE_PUSH:-0}}"
+PUSH_FAILED=""
 FORCE=0
 
 # ---------------------------------------------------------------------------
@@ -186,10 +196,18 @@ model_alias() {
   esac
 }
 
-# "/path/to/repo" or "`/path`" — expand ~ and require the directory to be a git repo.
-repo_path() {
+# The header's Target repo as a path: ~ expanded, a relative path resolved against REPOS_ROOT (so the
+# same prompt works in every instance of the stack). Empty when the header has none.
+target_repo() {
   local raw; raw="$(header_field "$1" "Target repo")"
   raw="${raw/#\~/$HOME}"
+  case "$raw" in ''|/*) ;; *) raw="$REPOS_ROOT/$raw" ;; esac
+  echo "$raw"
+}
+
+# "/path/to/repo", "repo/relative/to/REPOS_ROOT" or "`/path`" — require the directory to be a git repo.
+repo_path() {
+  local raw; raw="$(target_repo "$1")"
   [ -n "$raw" ] || die "No 'Target repo' in dispatch header: $1"
   [ -d "$raw/.git" ] || die "Target repo is not a git repository: $raw"
   echo "$raw"
@@ -213,7 +231,7 @@ prompt_service() {
     case "$base" in "PROMPT-$name-"*) [ "${#name}" -gt "${#best}" ] && best="$name" ;; esac
   done < <("$STACK" repos)
   [ -n "$best" ] && { echo "$best"; return 0; }
-  local repo; repo="$(header_field "$file" "Target repo")"; repo="${repo/#\~/$HOME}"
+  local repo; repo="$(target_repo "$file")"
   local list; list="$("$STACK" service-for "$repo" 2>/dev/null || true)"
   [ "$(printf '%s\n' "$list" | grep -c .)" = 1 ] && echo "$list"
   return 0
@@ -536,7 +554,7 @@ cmd_status() {
     found=1
     local repo="" branch="" wt="—"
     branch="$(header_field "$f" "Branch" | awk '{print $1}')"
-    repo="$(header_field "$f" "Target repo")"; repo="${repo/#\~/$HOME}"
+    repo="$(target_repo "$f")"
     if [ -n "$repo" ] && [ -n "$branch" ]; then
       local p; p="$(worktree_path "$repo" "$branch")"
       [ -d "$p" ] && wt="present" || wt="absent"
@@ -995,7 +1013,8 @@ merge_one() {  # merge_one <prompt-file>
 
   local cur; cur="$(git -C "$repo" branch --show-current)"
   [ "$cur" = "$BASE_BRANCH" ] || { log "Checking out $BASE_BRANCH in $(basename "$repo") (was $cur)"; git -C "$repo" checkout --quiet "$BASE_BRANCH"; }
-  local pre_sha; pre_sha="$(git -C "$repo" rev-parse HEAD)"
+  local pre_sha; pre_sha="$(git -C "$repo" rev-parse HEAD)"   # before the origin fast-forward: its manifest changes count too
+  [ "$PUSH" = "1" ] && sync_base_with_origin "$repo"
 
   log "Merging $branch → $BASE_BRANCH in $(basename "$repo")"
   if ! git -C "$repo" merge --no-ff --no-edit -m "merge: $branch ($name)" "$branch"; then
@@ -1020,7 +1039,14 @@ merge_one() {  # merge_one <prompt-file>
   fi
 
   local pushed="no"
-  if [ "$PUSH" = "1" ]; then git -C "$repo" push origin "$BASE_BRANCH" && pushed="yes"; fi
+  if [ "$PUSH" = "1" ]; then
+    if git -C "$repo" push origin "$BASE_BRANCH"; then pushed="yes"
+    else
+      pushed="FAILED (merged locally only — push by hand: git -C $repo push origin $BASE_BRANCH)"
+      PUSH_FAILED="$PUSH_FAILED $(basename "$repo")"
+      log "ERROR: push of $BASE_BRANCH to origin FAILED for $(basename "$repo") — the merge is local only."
+    fi
+  fi
 
   append_report "$file" "Merged" \
 "| Into | \`$BASE_BRANCH\` @ \`$merge_sha\` (merge commit) |
@@ -1030,8 +1056,28 @@ merge_one() {  # merge_one <prompt-file>
 | Dependencies installed (main checkout) | ${installed:-no manifest change} |
 | Pushed | $pushed |"
   metrics merge --prompt "$file" --base "$BASE_BRANCH" --merge-sha "$merge_sha" \
-    --impl-shas "$(printf '%s' "$impl_shas" | tr -d '`,')" --pushed "$pushed"
-  log "✔ $name merged into $BASE_BRANCH @ $merge_sha — implementing commits: $impl_shas"
+    --impl-shas "$(printf '%s' "$impl_shas" | tr -d '`,')" --pushed "${pushed%% *}"
+  log "✔ $name merged into $BASE_BRANCH @ $merge_sha — implementing commits: $impl_shas — pushed: ${pushed%% *}"
+}
+
+# sync_base_with_origin <repo> — before a merge that will be pushed: fetch origin and fast-forward the local
+# base branch to it. Refuses (dies) when origin is unreachable or the local base has diverged, because the
+# push would be rejected afterwards and leave a local-only merge behind.
+sync_base_with_origin() {
+  local repo="$1"
+  git -C "$repo" fetch --quiet origin "$BASE_BRANCH" \
+    || die "cannot fetch origin/$BASE_BRANCH for $(basename "$repo") — fix the remote/network or rerun with --no-push."
+  local behind ahead
+  behind="$(git -C "$repo" rev-list --count "$BASE_BRANCH..origin/$BASE_BRANCH")"
+  ahead="$(git -C "$repo" rev-list --count "origin/$BASE_BRANCH..$BASE_BRANCH")"
+  if [ "$behind" != "0" ]; then
+    if [ "$ahead" != "0" ]; then
+      die "$(basename "$repo") local '$BASE_BRANCH' has diverged from origin ($ahead ahead, $behind behind) — reconcile by hand, then re-run merge."
+    fi
+    log "Fast-forwarding $(basename "$repo") '$BASE_BRANCH' to origin ($behind commit(s))"
+    git -C "$repo" merge --ff-only --quiet "origin/$BASE_BRANCH" \
+      || die "could not fast-forward $(basename "$repo") '$BASE_BRANCH' to origin/$BASE_BRANCH."
+  fi
 }
 
 cmd_merge() {
@@ -1040,6 +1086,7 @@ cmd_merge() {
     case "$a" in
       --all) all=1 ;;
       --push) PUSH=1 ;;
+      --no-push) PUSH=0 ;;
       *) files+=("$(resolve_prompt "$a")") ;;
     esac
   done
@@ -1050,6 +1097,7 @@ cmd_merge() {
     done
   fi
   [ "${#files[@]}" -gt 0 ] || die "Nothing to merge (no Verified prompts given or found)."
+  [ "$PUSH" = "1" ] && log "Pushing $BASE_BRANCH to origin after each merge (MERGE_PUSH=1; pass --no-push to keep it local)"
   local f repos=""
   for f in "${files[@]}"; do
     merge_one "$f"   # sequential: merges into the same base must not overlap
@@ -1057,6 +1105,7 @@ cmd_merge() {
   done
   # shellcheck disable=SC2086
   clean_repos $repos   # leftovers (build output, .DS_Store, unregistered dirs) go with the worktree root
+  [ -z "${PUSH_FAILED// /}" ] || die "PUSH FAILED for:$PUSH_FAILED — the merges are local only; push each base branch by hand and report it."
 }
 
 # clean_repos <repo>... — delete every unregistered entry under <repo>-worktrees/ and the root itself once
@@ -1097,7 +1146,7 @@ cmd_clean() {  # clean [--force] — every code-service repo known to stack.sh p
   fi
   for f in "$PROMPTS_DIR"/PROMPT-*.md; do
     [ -f "$f" ] || continue
-    r="$(header_field "$f" "Target repo")"; r="${r/#\~/$HOME}"
+    r="$(target_repo "$f")"
     [ -d "$r/.git" ] && case " $repos " in *" $r "*) ;; *) repos="$repos $r" ;; esac
   done
   [ -n "$repos" ] || die "No repos to clean."
@@ -1110,7 +1159,7 @@ cmd_clean() {  # clean [--force] — every code-service repo known to stack.sh p
 
 # ---------------------------------------------------------------------------
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -1124,5 +1173,7 @@ case "$cmd" in
   serve)  cmd_serve "$@" ;;
   merge)  cmd_merge "$@" ;;
   clean)  cmd_clean "$@" ;;
+  deps)   [ $# -eq 2 ] || usage; git -C "$1" rev-parse --verify --quiet "$2^{commit}" >/dev/null || die "Not a commit in $1: $2"
+          r="$(install_changed_deps "$1" "$2")"; [ -z "$r" ] || printf '%s\n' "$r" ;;
   *) usage ;;
 esac

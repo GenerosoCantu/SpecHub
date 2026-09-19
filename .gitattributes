@@ -1,0 +1,9 @@
+# Logs that only grow: every instance of the stack (another folder, another laptop) adds lines to
+# both, so a merge keeps every side's lines instead of stopping on a conflict.
+#   metrics/ledger.jsonl — one JSON event per line; scripts/metrics.py drops any line a union merge
+#                          doubles, and re-sorts by time, so order after a merge does not matter.
+#   CHANGELOG.md         — one-line entries prepended by scripts/changelog.sh; two merged entries both
+#                          stay at the top, in either order.
+# METRICS.md is not listed: on a conflict, take either side and re-run `scripts/metrics.sh render`.
+metrics/ledger.jsonl merge=union
+CHANGELOG.md merge=union

@@ -12,8 +12,8 @@ This document describes the end-to-end process for bootstrapping the spec hub an
 0. BOOTSTRAP → Once per project (`scripts/bootstrap.sh init` + `bootstrap-specs` skill): detect the repos, write spechub.conf, extract fact sheets, generate every spec, the overview, CONVENTIONS.md, STATUS.md and repo-instructions/
 1. DESIGN    → Create Features/FEATURE-{name}.md (or Features/BUG-{name}.md for a defect in closed work — see Bugs)
 2. CASCADE & PROMPT → One session, one pass (`cascade-and-prompt` skill): 2a update the relevant service spec(s) + STATUS.md row; 2b generate Prompts/PROMPT-{service}-{feature}.md (one per service) from the cascaded spec; the cascade summary comes back with the prompts
-3. IMPLEMENT → Dispatch all prompts from the hub (`dispatch-prompts` skill → `scripts/dispatch.sh`): one worktree + headless session per prompt, in parallel; services restart from the worktrees; verify by hand
-4. CLOSE     → Merge branches into the base branch (services back on main checkouts, worktree folders deleted), update specs + STATUS.md + CHANGELOG, sync repo instructions, archive feature file & prompts
+3. IMPLEMENT → Dispatch all prompts from the hub (`dispatch-prompts` skill → `scripts/dispatch.sh`): one worktree + headless session per prompt, in parallel; services restart from the worktrees; verify by hand (rejections are recorded and fixed here)
+4. CLOSE     → Record the verification, merge branches into the base branch and push it (services back on main checkouts, worktree folders deleted), update specs + STATUS.md + CHANGELOG, sync repo instructions, archive feature file & prompts
 ```
 
 **One step per session, one model per step.** See [Context Budget](#context-budget) — it is part of the process, not advice.
@@ -95,7 +95,7 @@ Once design decisions are confirmed (the feature file has no open design decisio
 
 For a split spec: cascade into the relevant **module file(s)**. A new module gets its own file in the directory plus a row in the index file's File Map. Never re-add module content to the index.
 
-Also add a new row for the feature to the `STATUS.md` board (next sequential number; each affected service Pending).
+The feature's `STATUS.md` row is added first, before any spec edit, by `scripts/status.sh claim "<Feature name>" <service>...` — never by hand. The claim fast-forwards the hub to origin, takes the next free number, adds the In Flight row (each affected service Pending) and pushes it as its own commit. Every instance of the stack (another folder or another laptop, see `scripts/instance.sh`) has its own `STATUS.md`, so "next sequential number" read locally would give two instances the same number; the push to origin is what serializes them, and a rejected push retries on top of the other instance's claim. `--no-push` claims offline; `scripts/status.sh check` (also warned by `scripts/metrics.sh render`) then catches a collision when the hubs meet. Metrics are keyed by the feature slug, not the number, so a renumbered row moves no cost.
 
 **Cascade summary — record, don't pause.** Note every spec file touched (with the `PENDING` contracts added), any index-table row, the `STATUS.md` row, and every place the cascade adapted the feature file's proposal to an existing spec convention. This summary is the first part of the step's final report, next to the generated prompts; the session continues straight into 2b. The review happens once, on spec and prompts together, before Step 3 is started in its own session — a wrong name found then is fixed in the spec and the affected prompt regenerated (cheap, on the Standard tier). If the user explicitly asks for a checkpoint after the cascade, stop there instead.
 
@@ -108,7 +108,7 @@ Also add a new row for the feature to the `STATUS.md` board (next sequential num
 Each prompt must be **stateless and self-contained** (`templates/PROMPT-TEMPLATE.md`), and must open with this **dispatch header**:
 
 ```markdown
-> **Target repo:** {absolute local path of the git repo root}
+> **Target repo:** {git repo root, relative to `REPOS_ROOT` (e.g. `my-billing` or `my-monorepo`)}
 > **Service:** {service id from spechub.conf}
 > **Branch:** feature/{kebab-name}   <!-- fix/{kebab-name} for a BUG- file -->
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
@@ -167,7 +167,7 @@ What the dispatcher does for each prompt:
 Rules:
 
 - **Launch, then wait.** `run` and `resume` return at once; block with `scripts/dispatch.sh wait` (exit 0 all ok, 1 a run failed or was killed, 2 still running with `--timeout`). A prompt still `Generated` after `wait` has failed — the report entry says why. The `workspace has not been trusted` line in a run's stderr log is harmless (the repo's own settings allow-list is ignored; the dispatcher passes its own).
-- **Verified stays human.** The dispatcher never flips `Verified`. With the services already running from the worktrees, review each prompt (diff read, build run, endpoints/UI exercised) in the feature's implementation order, then run `scripts/dispatch.sh verify <prompt>`. Only `Verified` prompts graduate to Step 4.
+- **Verified stays human.** The dispatcher never flips `Verified`. With the services already running from the worktrees, review each prompt (diff read, build run, endpoints/UI exercised) in the feature's implementation order. The verdict is recorded where its follow-up happens: an **accepted** prompt is named in the Step 4 request ("verified: …, close the loop") and the `close-loop` skill runs `scripts/dispatch.sh verify <prompt>` before merging — a separate session just to run that one command is not worth its startup; a **rejected** prompt is recorded in a Step 3 session with `scripts/dispatch.sh verify <prompt> --fail "<reason>"` and fixed with `resume`. Only `Verified` prompts graduate to the merge.
 - **Bug fixes go to the same session.** `scripts/dispatch.sh resume <prompt> "<what to fix>"` continues the recorded session ID in the same worktree, so the model keeps the full implementation in context, then restarts that service from the worktree. For interactive debugging, resume the session inside the worktree with your CLI (`claude --resume <session-id>`, `codex resume <id>`, `copilot --resume <id>`).
 - **Never implement in the repo's main checkout.** All work lives on the feature branch in its worktree until Step 4a merges it and deletes it.
 - **Fallback: manual session.** A prompt that genuinely needs an interactive session can still be applied by hand — open a session inside the worktree the dispatcher created (or create one: `git worktree add -b <branch> <repo>-worktrees/<branch> <base>`), apply the prompt, commit, and flip `Status:` to `Applied` yourself. Step 4a merges it the same way.
@@ -178,10 +178,12 @@ Rules:
 
 ## Step 4 — Close the Loop
 
-After the implementation is verified, do all of the following **in a single pass** (open a new session in this workspace and invoke the `close-loop` skill, `skills/close-loop/`, which encodes this checklist and, where the tool supports it, runs as a forked `hub-ops` subagent on the Standard tier — the main session only receives the report):
+After the implementation is verified, do all of the following **in a single pass** (open a new session in this workspace and invoke the `close-loop` skill, `skills/close-loop/`, stating which prompts you verified; the skill encodes this checklist and, where the tool supports it, runs as a forked `hub-ops` subagent on the Standard tier — the main session only receives the report):
 
-### 4a. Merge each Verified branch into the base branch
-- Run `scripts/dispatch.sh merge --all` (or `merge <prompt>` per prompt, in the feature's implementation order). For each `Verified` prompt it merges the feature branch into the base branch in the target repo with a `--no-ff` merge commit, stops the service if it is running from the worktree, removes the worktree, deletes the feature branch, restarts that service from the main checkout, and appends a **Merged** entry (merge commit + implementing commit SHAs) to the prompt's run report. Pushing is opt-in (`--push`).
+### 4a. Record the verification, merge each Verified branch into the base branch, push
+- The skill first runs `scripts/dispatch.sh verify <prompt>` for every `Applied` prompt the request names as verified (implementation order), and stops if a prompt of the feature is left unverified. It never decides verification itself.
+- Then `scripts/dispatch.sh merge --all` (or `merge <prompt>` per prompt, in the feature's implementation order). For each `Verified` prompt it merges the feature branch into the base branch in the target repo with a `--no-ff` merge commit, stops the service if it is running from the worktree, removes the worktree, deletes the feature branch, restarts that service from the main checkout, and appends a **Merged** entry (merge commit + implementing commit SHAs + pushed) to the prompt's run report.
+- **The base branch is pushed to origin after each merge** (`MERGE_PUSH=1` in `spechub.conf`; `merge --no-push` keeps one merge local, `--push` forces it). Before a merge that will be pushed the script fetches origin and fast-forwards the local base to it, and refuses when origin is unreachable or the base has diverged — so the push is always a fast-forward. A rejected push makes the command fail with `PUSH FAILED for: …` and records `Pushed | FAILED`: the merge is local only and the close-out report must lead with it. Rolling back a pushed feature is `git revert -m 1 <merge-commit>` on the base branch (the SHA is in the run report and the changelog) — never a force-push. The headless implementation sessions still cannot push; only this merge touches the remote.
 - **The worktree folders must be gone when the loop closes.** `merge` ends by sweeping the affected repos' `<repo>-worktrees/` folders; `scripts/dispatch.sh clean` runs the same sweep across every service repo at any time (`--force` also removes registered worktrees); the close-out ends with it and reports any root still present.
 - The merge refuses to run if the prompt is not `Verified`, if the repo's main checkout is dirty, or if the merge conflicts — resolve by hand and re-run.
 - After this step every affected repo is back on a clean base branch that contains the feature. The implementing SHAs recorded here are the changelog's traceability refs (4d).
@@ -257,10 +259,10 @@ After the implementation is verified, do all of the following **in a single pass
 | Cascading into the specs and generating prompts (step 2) | New session — one session for both halves, `cascade-and-prompt` skill. **End the session when the prompts are on disk.** | Standard |
 | Dispatching prompts (step 3) | New session; `dispatch-prompts` skill runs forked in a `hub-ops` subagent — the main session gets the report | Standard |
 | Implementing any prompt (backend or frontend) | Headless session dispatched from the hub (`scripts/dispatch.sh run`), in its own worktree; all prompts of a feature run in parallel | Per the prompt header (Light by default) |
-| Verifying a dispatched prompt | Human, against the services the dispatcher restarted from the worktrees, in implementation order; then `scripts/dispatch.sh verify` | — |
+| Verifying a dispatched prompt | Human, against the services the dispatcher restarted from the worktrees, in implementation order. Accepted → say so in the Step 4 request (the `close-loop` skill records it with `scripts/dispatch.sh verify`). Rejected → Step 3 session, `verify --fail` + `resume` | — |
 | Fixing a bug in the current implementation | Same session, resumed: `scripts/dispatch.sh resume <prompt> "<fix>"` | Per the prompt header |
 | Interactive debugging of a dispatched prompt | Resume the session inside the worktree with your CLI (session ID is in the run report) | Per the prompt header |
-| Closing the loop (step 4) | New session; `close-loop` skill runs forked in a `hub-ops` subagent | Standard |
+| Closing the loop (step 4) | New session whose request names the verified prompts; `close-loop` skill runs forked in a `hub-ops` subagent, records the verification, merges and pushes | Standard |
 | Answering a question about what was just built | Resume the prompt's session | Per the prompt header |
 
 ---
@@ -298,7 +300,7 @@ If you cannot tell which class applies, it is B: a spec that allows two readings
 - **File:** `Features/BUG-{kebab-name}.md`, ≤ 8 KB. Archived to `Features/Implemented/` and staled to `Features/Staled/` exactly like a feature file.
 - **Design session:** Step 1 still applies, but a Standard-tier model is enough for Class A; use Advanced only when the cause is unknown or the Class B correction is a design decision.
 - **Prompts:** `Prompts/PROMPT-{service}-{bug-name}.md`, branch `fix/{bug-name}`. Every bug prompt requires a regression test that fails before the fix.
-- **Status board:** the row takes the next sequential number, like a feature; its name starts with `🐞 ` (e.g. `🐞 Story slug collision`).
+- **Status board:** the row is claimed with `scripts/status.sh claim`, like a feature; its name starts with `🐞 ` (e.g. `🐞 Story slug collision`).
 - **Changelog:** the entry starts with `Fix:` (e.g. `Fix: Story slug collision (#74) closed in api: …`).
 
 ---

@@ -324,6 +324,7 @@ EOF
     printf '# Plain bash, sourced by every script in scripts/. Edit freely: fix commands, ports, groups; reorder to change spec numbering.\n\n'
     printf 'PROJECT_NAME="%s"\n\n' "$name"
     printf '# Base branch feature branches are cut from and merged back into.\nBASE_BRANCH="%s"\n\n' "$base"
+    printf '# Push the base branch to origin after every Step 4 merge (1 = yes). The merge fast-forwards the local base\n# to origin first and refuses to run if it has diverged; `dispatch.sh merge --no-push` keeps one merge local.\nMERGE_PUSH="1"\n\n'
     printf '# Headless coding agent that runs the prompts: claude | codex | copilot (AGENT_BIN overrides the PATH lookup).\nAGENT_CLI="%s"\n#AGENT_BIN=""\n\n' "$agent"
     printf '# Model per tier for that CLI. Prompts name a tier (Light | Standard | Advanced); leave commented for the defaults.\n#MODEL_LIGHT=""\n#MODEL_STANDARD=""\n#MODEL_ADVANCED=""\n\n'
     printf '# Parent directory of the service repos; relative `dir` entries resolve against it.\nREPOS_ROOT="%s"\n\n' "$root"
@@ -364,6 +365,7 @@ load_conf() {
   # shellcheck disable=SC1090
   . "$CONF"
   REPOS_ROOT="${REPOS_ROOT:-$HUB_DIR/..}"
+  case "$REPOS_ROOT" in /*) ;; *) REPOS_ROOT="$(cd "$HUB_DIR/$REPOS_ROOT" && pwd)" || die "REPOS_ROOT not found: $HUB_DIR/$REPOS_ROOT" ;; esac
 }
 conf_services() {  # name|dir|start|port|label|group|install — comment/blank lines removed
   printf '%s\n' "$SERVICES" | grep -v '^[[:space:]]*#' | grep '|'
@@ -385,8 +387,9 @@ cmd_services() {
   [ -f "$AGENTS_MD" ] || die "AGENTS.md not found in $HUB_DIR"
   grep -q '<!-- services:start -->' "$AGENTS_MD" || die "AGENTS.md has no <!-- services:start --> marker"
   local table; table="$(
-    printf '| Service | Local repo | Group | Spec |\n|---|---|---|---|\n'
+    printf '| Service | Repo (under `REPOS_ROOT`) | Group | Spec |\n|---|---|---|---|\n'
     spec_rows | while IFS='|' read -r nn name dir label group spec; do
+      case "$dir" in "$REPOS_ROOT"/*) dir="${dir#$REPOS_ROOT/}" ;; esac   # relative: the same table serves every instance
       printf '| `%s` — %s | `%s` | %s | %s |\n' "$name" "$label" "$dir" "$group" "$( [ "$spec" = "-" ] && echo "— (static server, no spec)" || printf '`%s`' "$spec" )"
     done
   )"

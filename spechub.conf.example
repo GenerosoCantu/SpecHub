@@ -9,6 +9,10 @@ PROJECT_NAME="My Platform"
 # Base branch feature branches are cut from and merged back into (dev, develop, main …).
 BASE_BRANCH="main"
 
+# Push the base branch to origin after every Step 4 merge (1 = yes). The merge fast-forwards the local base
+# to origin first and refuses to run if it has diverged; `dispatch.sh merge --no-push` keeps one merge local.
+MERGE_PUSH="1"
+
 # Headless coding agent that runs the prompts (WORKFLOW.md Step 3): claude | codex | copilot.
 # AGENT_BIN overrides the PATH lookup.
 AGENT_CLI="claude"
@@ -21,8 +25,16 @@ AGENT_CLI="claude"
 #MODEL_STANDARD=""
 #MODEL_ADVANCED=""
 
-# Parent directory of the service repos. Relative `dir` entries below resolve against it.
+# Parent directory of the service repos. Relative `dir` entries below resolve against it. A relative
+# REPOS_ROOT resolves against this hub folder (e.g. ".." when the hub sits next to the repos), so a clone
+# of the hub at the same place under another root finds that root's repos.
 REPOS_ROOT="$HOME/projects/my-platform"
+
+# Several instances of the whole stack on one machine (another folder, another checkout): each instance
+# is its own root with its own hub, and its gitignored spechub.local.conf sets PORT_OFFSET (every port
+# below + offset; `{port}` in a start command and the PORT env var get the shifted value) plus extra
+# SERVICES rows such as its own database. `scripts/instance.sh init <new-root> <offset>` creates one;
+# `scripts/instance.sh sync` brings an instance up to date before each workflow step.
 
 # Gitignored files copied from a repo's main checkout into each fresh worktree so builds,
 # tests and dev servers work there (glob patterns, space separated).
@@ -36,7 +48,8 @@ WORKTREE_LINK_DIRS="node_modules .venv vendor"
 #   name     short id used everywhere: service identifier in specs, prompts and scripts/stack.sh
 #   dir      absolute, or relative to REPOS_ROOT — a git repo root, or a folder inside a monorepo
 #            (worktrees are made of the git root; the service runs from the same folder inside them)
-#   start    the dev-server command, run from `dir`
+#   start    the dev-server command, run from `dir`. It must take its port from the PORT env var or
+#            `{port}` (replaced by the effective port), or a PORT_OFFSET instance cannot move it
 #   port     the port it listens on (used for status and collision checks)
 #   label    human name shown on the board
 #   group    static | backend | frontend — start order is static → backend → frontend
@@ -46,5 +59,5 @@ SERVICES="
 web|my-monorepo/apps/web|npm run dev|3000|Web App (Next.js)|frontend|npm install
 api|my-monorepo/apps/api|npm run start:dev|4000|Main API (NestJS)|backend|npm install
 billing|my-billing|./mvnw spring-boot:run|8080|Billing Service (Spring Boot)|backend|./mvnw -q -DskipTests install
-assets|my-billing/data|npx serve -l 3100 --cors|3100|Asset server (serve)|static|-
+assets|my-billing/data|npx serve -l {port} --cors|3100|Asset server (serve)|static|-
 "

@@ -24,6 +24,8 @@ A one-page view of `WORKFLOW.md` for people: which step, which session, which mo
 | 3″ | **Verify** each prompt, in implementation order | Test by hand against the services running from the worktrees, then `scripts/dispatch.sh verify <prompt>` (or `--fail "<reason>"`) | Human, no agent | — |
 | 4 | **Close the loop**: merge, reconcile specs, `STATUS.md`, changelog, metrics, archive | `close-loop` skill | **New.** Forks into `hub-ops`. | Standard (`sonnet`) |
 
+**Before every step, in a terminal (no session, no tokens):** `scripts/instance.sh sync`. The session hooks add a line to `metrics/ledger.jsonl` when a session ends, after your last commit, and that uncommitted line blocks a plain `git pull`. `sync` commits the ledger by itself, merges origin into the hub, pushes it, and fast-forwards the service repos. It stops on a real conflict and leaves the hub as it was.
+
 ---
 
 ## In-between tasks

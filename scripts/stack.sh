@@ -13,7 +13,8 @@
 #   ./scripts/stack.sh list
 #   ./scripts/stack.sh service-for <repo-dir>   # service name(s) whose git root is <repo-dir>, one per line (used by dispatch.sh)
 #   ./scripts/stack.sh is-running <name>        # prints the pid, exit 0, when the service is running
-#   ./scripts/stack.sh repos                    # name|dir|kind|git-root|path-in-repo for every service
+#   ./scripts/stack.sh repos                    # name|dir|kind|git-root|path-in-repo|git-root-under-REPOS_ROOT for every service
+#   ./scripts/stack.sh root                     # the resolved REPOS_ROOT
 #
 #   -w, --worktree <branch>   run code services from their git worktree for
 #                             <branch> instead of the main checkout, e.g.
@@ -25,6 +26,10 @@
 # The service table lives in spechub.conf (name|dir|start|port|label|group|install). A service `dir`
 # is either a git repo root or a directory inside one (monorepo): worktrees are always made of the
 # git root, and the service runs from the same relative path inside the worktree.
+# Ports: every service is started with PORT=<port + PORT_OFFSET> in its environment, and `{port}` in
+# a start command is replaced by the same number. PORT_OFFSET (default 0) and any extra services
+# belong in the gitignored spechub.local.conf, so several instances of the whole stack can run side
+# by side on one machine, each from its own hub (scripts/instance.sh creates one).
 # Processes run detached in their own process group; PIDs live in .run/ and
 # output in .logs/. Nothing is installed or written outside those two dirs.
 # ---------------------------------------------------------------------------
@@ -37,7 +42,13 @@ CONF="$WORKSPACE/spechub.conf"
 [ -f "$CONF" ] || { echo "spechub.conf not found in $WORKSPACE — run scripts/bootstrap.sh init <repos-root> first (or copy spechub.conf.example)." >&2; exit 1; }
 # shellcheck disable=SC1090
 . "$CONF"
+# Per-instance overrides (PORT_OFFSET, REPOS_ROOT, extra SERVICES rows) — gitignored.
+# shellcheck disable=SC1091
+[ -f "$WORKSPACE/spechub.local.conf" ] && . "$WORKSPACE/spechub.local.conf"
 ROOT="${REPOS_ROOT:-$WORKSPACE/..}"
+case "$ROOT" in /*) ;; *) ROOT="$(cd "$WORKSPACE/$ROOT" && pwd)" || { echo "REPOS_ROOT not found: $WORKSPACE/$REPOS_ROOT" >&2; exit 1; } ;; esac
+PORT_OFFSET="${PORT_OFFSET:-0}"
+case "$PORT_OFFSET" in ''|*[!0-9]*) echo "PORT_OFFSET must be a non-negative integer (got '$PORT_OFFSET')" >&2; exit 1 ;; esac
 RUN_DIR="$WORKSPACE/.run"
 LOG_DIR="$WORKSPACE/.logs"
 # Set by --worktree/-w or STACK_WORKTREE. Empty = use the main checkouts.
@@ -102,8 +113,10 @@ svc_dir() {
   svc_base_dir "$1"
 }
 on_worktree() { [ "$(svc_dir "$1")" != "$(svc_base_dir "$1")" ]; }
-svc_cmd()     { field "$1" 3; }
-svc_port()    { field "$1" 4; }
+# Start command with {port} replaced by the effective port.
+svc_cmd()     { local c p; c="$(field "$1" 3)"; p="$(svc_port "$1")"; printf '%s\n' "${c//\{port\}/$p}"; }
+# Effective port: the spechub.conf port shifted by this instance's PORT_OFFSET.
+svc_port()    { local p; p="$(field "$1" 4)"; case "$p" in ''|*[!0-9]*) echo "$p" ;; *) echo $((p + PORT_OFFSET)) ;; esac; }
 svc_label()   { field "$1" 5; }
 svc_group()   { field "$1" 6; }
 svc_install() { field "$1" 7; }
@@ -194,7 +207,7 @@ start_one() {
 
   : > "$(log_file "$name")"
   # shellcheck disable=SC2086  # $cmd is a trusted, space-separated command line
-  ( cd "$dir" && set -f && exec $cmd ) >>"$(log_file "$name")" 2>&1 </dev/null &
+  ( cd "$dir" && export PORT="$port" && set -f && exec $cmd ) >>"$(log_file "$name")" 2>&1 </dev/null &
   pid=$!
   echo "$pid" > "$(pid_file "$name")"
   local wt_note=""
@@ -228,6 +241,7 @@ cmd_start() {
   local names phase n started_any=0
   names="$(resolve "$@")"
   echo "${C_BOLD}Starting${C_RESET}"
+  offset_banner
   worktree_banner "$names"
   for phase in "$STATIC_SERVICES" "$BACKEND_SERVICES" "$FRONTEND_SERVICES"; do
     local phase_has=0
@@ -244,7 +258,10 @@ cmd_start() {
 cmd_stop()    { echo "${C_BOLD}Stopping${C_RESET}"; local n; for n in $(resolve "$@"); do stop_one "$n"; done; }
 cmd_restart() { cmd_stop "$@"; echo; cmd_start "$@"; }
 
+offset_banner() { [ "$PORT_OFFSET" = 0 ] || echo "  ${C_YELLOW}instance${C_RESET} ports shifted by +$PORT_OFFSET ${C_DIM}(spechub.local.conf)${C_RESET}"; }
+
 cmd_status() {
+  offset_banner
   worktree_banner "$ALL_SERVICES"
   printf "%-24s %-42s %-6s %-9s %-8s %s\n" SERVICE NAME PORT STATE PID PORT-STATE
   local n pid state port listen
@@ -296,9 +313,15 @@ cmd_service_for() {   # every code service whose git root is <dir> (one per line
   [ "$found" = 1 ]
 }
 cmd_is_running() { [ -n "$(meta "$1")" ] || die "Unknown service '$1'"; running_pid "$1"; }   # prints the pid
-cmd_repos() { local n; for n in $ALL_SERVICES; do printf '%s|%s|%s|%s|%s\n' "$n" "$(svc_base_dir "$n")" "$(svc_kind "$n")" "$(svc_git_root "$n")" "$(svc_subpath "$n")"; done; }
+# Git root relative to REPOS_ROOT when it lies inside it (the form prompts write as `Target repo`), else absolute.
+svc_git_root_rel() {
+  local g r; g="$(svc_git_root "$1")"; r="$(cd "$ROOT" && pwd -P)"; g="$(cd "$g" 2>/dev/null && pwd -P || echo "$g")"
+  case "$g" in "$r"/*) echo "${g#$r/}" ;; *) echo "$g" ;; esac
+}
+cmd_repos() { local n; for n in $ALL_SERVICES; do printf '%s|%s|%s|%s|%s|%s\n' "$n" "$(svc_base_dir "$n")" "$(svc_kind "$n")" "$(svc_git_root "$n")" "$(svc_subpath "$n")" "$(svc_git_root_rel "$n")"; done; }
+cmd_root() { echo "$ROOT"; }
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # Pull -w/--worktree out of the arguments wherever it appears, so it composes
 # with every subcommand and with service names.
@@ -326,6 +349,7 @@ case "${1:-help}" in
   service-for) shift; cmd_service_for "${1:?repo dir}" ;;
   is-running)  shift; cmd_is_running "${1:?service name}" ;;
   repos)       cmd_repos ;;
+  root)        cmd_root ;;
   help|-h|--help) usage ;;
   *) usage; exit 1 ;;
 esac

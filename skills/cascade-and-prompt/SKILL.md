@@ -14,8 +14,8 @@ For a feature that has completed Design (Step 1): write its contracts into the s
 1. `CONVENTIONS.md` — shared conventions every spec edit and prompt inherits
 2. `Features/FEATURE-{name}.md` or `Features/BUG-{name}.md` — the feature or bug file (must exist in `Features/`; if it doesn't, stop and run Step 1 first; if it is in `Features/Staled/`, stop — staled designs must be re-validated and moved back before use)
 3. For each affected service: its spec. **Single-file spec** (`NN-{service}.md`): read it. **Split spec** (`NN-{service}.md` is an index with a `NN-{service}/` directory): read the index, `NN-{service}/00-core.md`, and **only the module file(s) this feature touches**; read `01-conventions.md` only if env/config, constants or shared shapes are involved.
-4. `STATUS.md` — to add (or find) the feature row
-5. `spechub.conf` — for each affected service, its `name` is the prompt's `Service` and the git root of its `dir` (resolved against `REPOS_ROOT`; `scripts/stack.sh repos` prints it as the 4th field) is the prompt's `Target repo`
+4. `STATUS.md` — to find the feature's row, if it already has one (the row itself is added by `scripts/status.sh claim`, §3)
+5. `spechub.conf` — for each affected service, its `name` is the prompt's `Service` and the git root of its `dir` (resolved against `REPOS_ROOT`; `scripts/stack.sh repos` prints it relative to `REPOS_ROOT` as the 6th field) is the prompt's `Target repo`
 
 Do NOT read every module file, `WORKFLOW.md`, `00-architecture-overview.md`, `CHANGELOG.md`, `bootstrap/`, or unrelated specs. Do not grep `archive/`, `Features/Implemented/` or `Prompts/Implemented/`. These are the same files both halves need — that is why they share a session; do not re-read them between 2a and 2b except as §4 requires.
 
@@ -27,13 +27,14 @@ Do NOT read every module file, `WORKFLOW.md`, `00-architecture-overview.md`, `CH
 
 ## 3. Cascade (2a)
 
-**Class A bug:** skip the spec edit below — the spec is already correct. Only add the `STATUS.md` row (name prefixed `🐞 `), and record "no spec change; contracts from {cited spec passage}" as the cascade summary. **Class B bug:** cascade the "Spec change" section exactly as for a feature, markers named after the bug.
+**Claim the number first — before any spec edit.** Run `scripts/status.sh claim "<Feature name>" <service>... --note "<one line>"` with the affected services' `spechub.conf` names. It fast-forwards the hub to origin, takes the next free number, adds the In Flight row (each service 🔄 Pending) and pushes it as its own commit, so another instance of the stack can never take the same number; it prints the number. Never pick a number or write the row by hand. A name already on the board prints its existing number (a regenerate run). If it fails (origin unreachable, the hub diverged), stop and report the message: the user resolves it (`scripts/instance.sh sync`, or `--no-push` to claim offline).
+
+**Class A bug:** skip the spec edit below — the spec is already correct. Only claim the `STATUS.md` row (name prefixed `🐞 `), and record "no spec change; contracts from {cited spec passage}" as the cascade summary. **Class B bug:** cascade the "Spec change" section exactly as for a feature, markers named after the bug.
 
 Write the feature into the affected spec(s) **as if it were already implemented**, in the exact format the surrounding spec uses — module, endpoints, schema/entity, DTO/class names, state slice, views, file/storage changes. Mark every added or changed contract with a `<!-- PENDING: {feature} -->` marker (Step 4 removes them on reconciliation).
 
 - Split specs: edit the relevant **module file(s)**. A new module gets its own file in the directory (`templates/MODULE-TEMPLATE.md`) plus a row in the index file's File Map. Never add module content to an index file.
 - Where the feature file's proposed name or shape conflicts with a convention already in the spec, the spec's convention wins — adapt the contract, and note the change for the report.
-- Add the feature's row to `STATUS.md` (next sequential number; each affected service 🔄 Pending).
 
 **Cascade summary — record it, do not pause.** Keep a list of each spec/module file touched and the `PENDING` contracts added, any index-table row, the `STATUS.md` row, and every place the cascade adapted the feature file's proposal to an existing convention. It opens the final report (§6). Then continue straight into §4: the user reviews spec and prompts together before Step 3 starts, and a wrong name found then is fixed in the spec and the affected prompt regenerated.
 
@@ -46,7 +47,7 @@ File: `Prompts/PROMPT-{service}-{feature}.md`, one per affected service. Service
 Every prompt MUST open with the dispatch header:
 
 ```markdown
-> **Target repo:** {absolute local path of the git repo root}
+> **Target repo:** {git repo root, relative to `REPOS_ROOT` (e.g. `my-billing` or `my-monorepo`)}
 > **Service:** {service id from spechub.conf}
 > **Branch:** feature/{kebab-name}   <!-- fix/{kebab-name} for a BUG- file -->
 > **Prerequisites:** {PROMPT-file(s) this one depends on — sets verification and merge order, or "none"}
@@ -54,7 +55,7 @@ Every prompt MUST open with the dispatch header:
 > **Recommended model:** {tier} — {one-line reason, carried from the feature file}
 ```
 
-Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the absolute path of the git root (for a monorepo, the repo, not the service folder); `Service` names the spechub.conf service, which tells the dispatcher which subtree the prompt owns and which service to restart; `Branch` is `feature/{kebab-name}`, or `fix/{kebab-name}` for a bug (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
+Header rules the dispatcher (Step 3, `scripts/dispatch.sh`) relies on: `Target repo` is the git root relative to `REPOS_ROOT` (for a monorepo, the repo, not the service folder) — relative, so a prompt committed in one instance of the stack dispatches into the same repo of whichever instance runs it; an absolute path is still accepted; `Service` names the spechub.conf service, which tells the dispatcher which subtree the prompt owns and which service to restart; `Branch` is `feature/{kebab-name}`, or `fix/{kebab-name}` for a bug (unique per prompt — two prompts on the same repo need two branches); `Recommended model` starts with the tier name (`Light`, `Standard`, or `Advanced`) since it selects the session's model through `spechub.conf`. Prerequisites do not block dispatch — all prompts of a feature run in parallel — they order verification and merge, and must reflect the feature file's `Implementation order` line.
 
 Then the body, per WORKFLOW.md Step 2b:
 

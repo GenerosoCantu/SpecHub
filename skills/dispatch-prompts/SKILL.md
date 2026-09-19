@@ -71,13 +71,15 @@ This resumes the recorded session ID inside the same worktree (detached, like `r
 
 ## 5. Verification is human — never automate it
 
-The script never flips `Verified`, and neither do you. The services are already running from the worktrees; only after the user says they have reviewed the diff, run the build, and exercised the endpoints/UI (in the feature's implementation order) do you run:
+The script never flips `Verified`, and neither do you. The services are already running from the worktrees; the user reviews the diff, runs the build, and exercises the endpoints/UI in the feature's implementation order. **Verification has two outcomes, and both must be recorded.**
+
+- **Accepted** → the user starts the `close-loop` skill in a new session and states which prompts they verified; that skill records the acceptance (`scripts/dispatch.sh verify <prompt>`) right before merging. Only run `verify <prompt>` here yourself when the user explicitly asks to mark a prompt verified without closing the loop yet (e.g. the backend is accepted, the frontend is still under review):
 
 ```bash
 scripts/dispatch.sh verify PROMPT-api-x
 ```
 
-**Verification has two outcomes, and both must be recorded.** If the user rejects the work, run:
+- **Rejected** → stays in this skill, because the fix is a `resume`. Run:
 
 ```bash
 scripts/dispatch.sh verify PROMPT-api-x --fail "the dropdown writes a string, not a boolean"
@@ -93,4 +95,4 @@ Merging into the base branch is Step 4 (`close-loop` skill → `scripts/dispatch
 
 Report: which prompts were dispatched, their states on the board, commits and deviations per prompt, which services run from which worktree, and what the user must verify next (with the implementation order from the prompts' `Prerequisites:` lines). Keep the report under 40 lines — it is all the main session receives.
 
-Verification is human and Step 4 (`close-loop`) starts in a **new session**; do not proceed into either.
+Verification is human. Once the user has verified, Step 4 (`close-loop`) starts in a **new session** whose request names the verified prompts; do not proceed into either.

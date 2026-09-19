@@ -241,13 +241,23 @@ def hdr(path, key):
 
 # --------------------------------------------------------------------------- ledger
 def read_ledger(path=LEDGER):
+    """The ledger's events, with the leftovers of a git union merge dropped.
+
+    The ledger is merged with `merge=union` (.gitattributes) so two instances of the stack never
+    conflict on it. A union merge keeps both sides of a hunk, so it can leave an identical line
+    twice, or a hub session's older recording next to the newer one that `sync` wrote in its
+    place. Both are collapsed here — per session, the recording with the most transcript bytes
+    wins — so every view counts each event once; `sync` persists the cleanup.
+    """
     out = []
     if not os.path.exists(path):
         return out
+    seen, best = set(), {}
     for ln in open(path, encoding='utf-8'):
         ln = ln.strip()
-        if not ln:
+        if not ln or ln in seen:
             continue
+        seen.add(ln)
         try:
             e = json.loads(ln)
         except json.JSONDecodeError:
@@ -255,8 +265,22 @@ def read_ledger(path=LEDGER):
         if e.get('schema', 1) > SCHEMA:
             die('ledger holds schema v%s; this script speaks v%s. Upgrade scripts/metrics.py.'
                 % (e['schema'], SCHEMA))
+        sid = e.get('session_id') if e.get('event') == 'hub_session' else None
+        if sid:
+            i = best.get(sid)
+            if i is not None:
+                if (e.get('transcript_bytes') or 0) >= (out[i].get('transcript_bytes') or 0):
+                    out[i] = e
+                continue
+            best[sid] = len(out)
         out.append(e)
     return out
+
+
+def ledger_lines(path=LEDGER):
+    if not os.path.exists(path):
+        return 0
+    return sum(1 for ln in open(path, encoding='utf-8') if ln.strip())
 
 
 def append(ev):
@@ -651,6 +675,8 @@ def sync_transcripts(extra=(), quiet=False, backfilled=False):
             fresh[ev['session_id']] = ev
             drop |= {ev['session_id'], os.path.basename(p)[:36]}
     if not fresh:
+        if len(evs) < ledger_lines():   # a union merge left duplicates: persist read_ledger's cleanup
+            rewrite(evs)
         return 0
     evs = [e for e in evs if not (e.get('event') == 'hub_session' and e.get('session_id') in drop)]
     evs.extend(fresh.values())
@@ -1270,11 +1296,10 @@ def cmd_report(argv):
                      kt(sum(tks.get(k, 0) for k in TOKEN_KEYS if k != 'thinking') or None),
                      dur(e.get('wall_ms') or e.get('duration_ms')), detail[:40]))
 
-    rows = [(fe, st.feature_cost(fe)) for fe in st.features]
+    rows = [(fe, st.feature_cost(fe)) for fe in newest_first(st.features, st, feature_numbers())]
     rows = [r for r in rows if r[1]['total'] is not None]
     if rows:
-        rows.sort(key=lambda r: -(r[1]['total'] or 0))
-        print('\nAPI-LIST VALUE PER FEATURE')
+        print('\nAPI-LIST VALUE PER FEATURE (latest first)')
         print('  %-34s %9s %9s %9s  %s' % ('feature', 'hub', 'dispatch', 'total', 'runs/res/ver'))
         for fe, c in rows[:12]:
             print('  %-34s %9s %9s %9s  %d/%d/%d'
@@ -1350,6 +1375,15 @@ def feature_numbers():
     return out
 
 
+def duplicate_numbers(numbers):
+    """number -> [slugs] for every STATUS.md number held by more than one row (two instances of
+    the stack claimed it offline). `scripts/status.sh check` is the gate; render only reports."""
+    by = {}
+    for slug, n in numbers.items():
+        by.setdefault(n, []).append(slug)
+    return {n: sorted(s) for n, s in by.items() if len(s) > 1}
+
+
 def num_for(slug, numbers):
     if slug in numbers:
         return numbers[slug]
@@ -1360,6 +1394,18 @@ def num_for(slug, numbers):
         if s > score:
             best, score = v, s
     return best if score >= 2 else None
+
+
+def newest_first(features, st, numbers):
+    """Board order for every per-feature table: STATUS.md number descending, so the latest
+    feature is on top. Features with no number follow, most recently active first."""
+    last = {}
+    for e in st.evs:
+        fe = e.get('feature')
+        if fe and (e.get('ts') or '') > last.get(fe, ''):
+            last[fe] = e['ts']
+    out = sorted(features, key=lambda f: last.get(f, ''), reverse=True)
+    return sorted(out, key=lambda f: -(num_for(f, numbers) or 0))
 
 
 def cmd_render(argv):
@@ -1376,6 +1422,10 @@ def cmd_render(argv):
     h, d = st.totals()
     tot = h + d
     numbers = feature_numbers()
+    dups = duplicate_numbers(numbers)
+    for n, slugs in sorted(dups.items()):
+        warn('STATUS.md number #%d is used by %d rows (%s) — renumber one; `scripts/status.sh check` '
+             'lists them.' % (n, len(slugs), ', '.join(slugs)))
     L = []
     A = L.append
 
@@ -1386,6 +1436,11 @@ def cmd_render(argv):
     A('> Window: %s → %s · %d feature(s) · %d dispatch run(s) · %s'
       % (st.window[0], st.window[1], len(st.features), len(st.runs), coverage_note(st)))
     A('')
+    if dups:
+        A('> ⚠ **Duplicate feature numbers in `STATUS.md`:** %s. The `#` column below is ambiguous for '
+          'them until one is renumbered (`scripts/status.sh check`).'
+          % '; '.join('#%d (%s)' % (n, ', '.join(s)) for n, s in sorted(dups.items())))
+        A('')
     A('> **Dollars on this board are API-list value, not an invoice.** They are what this usage would '
       'have cost at list prices (`metrics/prices.tsv`, tokens x price). The workspace runs on a '
       'flat-fee subscription, so nothing here is billed per token. The dollar is kept because it is '
@@ -1438,14 +1493,14 @@ def cmd_render(argv):
           'to move.' % (money(cr), pct(cr, tot)))
         A('')
 
-    rows = [(fe, st.feature_cost(fe)) for fe in st.features]
+    rows = [(fe, st.feature_cost(fe)) for fe in newest_first(st.features, st, numbers)]
     rows = [r for r in rows if r[1]['total'] is not None]
     if rows:
-        rows.sort(key=lambda r: -(r[1]['total'] or 0))
         A('## API-list value per feature')
         A('')
         A('Value never appears without the friction counts beside it: a feature that needed resumes '
-          'used more than its headline figure, and the headline alone never says so.')
+          'used more than its headline figure, and the headline alone never says so. Latest feature '
+          'first; the 15 most recent are listed, the median covers all of them.')
         A('')
         A('| # | Feature | Hub | Dispatch | Total | Runs | Resumes | Verify attempts |')
         A('|---|---------|---:|---:|---:|---:|---:|---:|')
@@ -1559,7 +1614,7 @@ def cmd_render(argv):
         A('')
         A('| # | Feature | 1 design | 2 cascade | 3 dispatch (hub) | 3 runs | 4 close | Total |')
         A('|---|---------|---:|---:|---:|---:|---:|---:|')
-        for fe in sorted(full, key=lambda f: -(sum(v for v in mx[f].values() if v) or 0)):
+        for fe in newest_first(full, st, numbers):
             row, tsum = mx[fe], sum(v for v in mx[fe].values() if v)
             n = num_for(fe, numbers)
             A('| %s | %s | %s | %s | %s | %s | %s | **%s** |'
