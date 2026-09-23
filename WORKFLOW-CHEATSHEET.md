@@ -17,14 +17,14 @@ A one-page view of `WORKFLOW.md` for people: which step, which session, which mo
 | # | Step | How to start it | Session | Model |
 |---|---|---|---|---|
 | 0 | **Bootstrap** the hub from the repos | `scripts/bootstrap.sh init`, then the `bootstrap-specs` skill | **New.** Forks one `spec-writer` per service. End the session when the files are on disk. Clone the hub next to the service repos, or set `REPOS_ROOT` in the gitignored `spechub.local.conf`. | Standard (`sonnet`) |
-| 1 | **Design** the feature → `Features/FEATURE-{name}.md` (a bug in closed work → `Features/BUG-{name}.md`, see [Bugs](#bugs)) | Ask in plain language (no skill). Use `Explore` subagents to read the code. | **New.** It must not carry context from another feature. End the session when the file is written. | Advanced (`opus`) |
+| 1 | **Design** the feature → `Features/FEATURE-{name}.md` (a bug in closed work → `Features/BUG-{name}.md`, see [Bugs](#bugs)) | Ask in plain language (no skill). The session first posts `scripts/lock.sh intend {name} <services>` — a notice, blocks nobody, warns you if someone is designing or holding the same area — then designs. Use `Explore` subagents to read the code. | **New.** It must not carry context from another feature. End the session when the file is written. | Advanced (`opus`) |
 | 2 | **Cascade & Prompt**: spec edits + `STATUS.md` row, then `Prompts/PROMPT-*.md` | `cascade-and-prompt` skill | **New.** One pass does both halves. End the session when the prompts are on disk. | Standard (`sonnet`) |
 | 3 | **Dispatch**: run prompts in worktrees, in parallel | `dispatch-prompts` skill (`scripts/dispatch.sh run --all`, `wait`) | **New.** Forks into `hub-ops`. | Standard (`sonnet`; `hub-ops` is set to `sonnet`) |
 | 3′ | *Implementation* (headless, one per prompt) | Started by the dispatcher | Its own headless session per prompt, each in a worktree | The tier in the prompt header (`Recommended model:`) |
 | 3″ | **Verify** each prompt, in implementation order | Test by hand against the services running from the worktrees, then `scripts/dispatch.sh verify <prompt>` (or `--fail "<reason>"`) | Human, no agent | — |
 | 4 | **Close the loop**: merge, reconcile specs, `STATUS.md`, changelog, metrics, archive | `close-loop` skill | **New.** Forks into `hub-ops`. | Standard (`sonnet`) |
 
-**Before every step, in a terminal (no session, no tokens):** `scripts/instance.sh sync`. The session hooks add a line to `metrics/ledger.jsonl` when a session ends, after your last commit, and that uncommitted line blocks a plain `git pull`. `sync` commits the ledger by itself, merges origin into the hub, pushes it, and fast-forwards the service repos. It stops on a real conflict and leaves the hub as it was.
+**Before every step, in a terminal (no session, no tokens):** `scripts/instance.sh sync` (it ends by checking the spec locks; `scripts/lock.sh list` shows who holds which spec file). The session hooks add a line to `metrics/ledger.jsonl` when a session ends, after your last commit, and that uncommitted line blocks a plain `git pull`. `sync` commits the ledger by itself, merges origin into the hub, pushes it, and fast-forwards the service repos. It stops on a real conflict and leaves the hub as it was.
 
 ---
 
@@ -40,7 +40,8 @@ A one-page view of `WORKFLOW.md` for people: which step, which session, which mo
 | **Fix a bug** in a dispatched implementation (prompt still `Applied`, not merged) | **Resume that prompt's session:** `scripts/dispatch.sh resume <prompt> "<fix>"` | The tier in the prompt header | Never start a new run. The session still has the implementation in context. Already merged and closed? Write a `BUG-` file instead (see [Bugs](#bugs)). |
 | Interactive debugging of a dispatched prompt | Resume inside the worktree: `claude --resume <session-id>` (the ID is in the run report) | The tier in the prompt header | |
 | Question about what was just built | Resume the prompt's session | The tier in the prompt header | |
-| Revive a staled feature (`Features/Staled/`) | **New** session | Advanced (`opus`) | Check it against the current specs first, then move it back to `Features/`. |
+| Revive a staled feature (`Features/Staled/`) | **New** session | Advanced (`opus`) | The session posts a new `scripts/lock.sh intend` first (staling released the row), checks the design against the current specs, then moves it back to `Features/`. |
+| Park (stale) a feature, or abandon a design | — (terminal) | — | Move the file to `Features/Staled/`, flip its `STATUS.md` row to ⏸, drop its `PENDING` markers, `scripts/lock.sh release {name}`. An abandoned design that never reached Step 2 only needs the `release`. |
 
 ### About polishing prompts
 

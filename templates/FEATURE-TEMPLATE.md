@@ -40,6 +40,7 @@
 
 ## Outstanding work (checklist)
 
+- [x] Intent posted: `scripts/lock.sh intend {name} {services}` (Step 1, the design session's first action; Step 2a upgrades it to a hold on the exact module files)
 - [ ] Cascade into {spec / module file(s)} as PENDING (Step 2a)
 - [ ] Add row to STATUS.md
 - [ ] Generate Prompts/PROMPT-{service}-{feature}.md (per service, in implementation order — Step 2b, same session)

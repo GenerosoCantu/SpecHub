@@ -34,7 +34,8 @@
 #                                                   (the ledger merges as a union; other uncommitted edits are
 #                                                   stashed around the merge), push the hub, then pull every
 #                                                   service repo as above. A real conflict aborts the merge and
-#                                                   leaves the hub as it was.
+#                                                   leaves the hub as it was. Ends with scripts/lock.sh check: two
+#                                                   features holding one spec file is reported, never resolved here.
 #
 # Run init..ports from the hub of the SOURCE instance; run pull from the hub of the instance to update.
 # A port here is a spechub.conf port plus an offset: this hub's PORT_OFFSET (its spechub.local.conf,
@@ -401,6 +402,10 @@ cmd_sync() {
 
   # 4. The service repos (the hub now matches origin, so pull reports it up to date).
   cmd_pull ${pass[@]+"${pass[@]}"}
+
+  # 5. Spec locks: a collision (two features holding one spec file) is reported, not fixed here.
+  [ -x "$HUB_DIR/scripts/lock.sh" ] && { "$HUB_DIR/scripts/lock.sh" check || log "hub — spec locks collide (above): the holders decide who yields"; }
+  return 0
 }
 
 cmd_init() {
@@ -424,7 +429,8 @@ cmd_init() {
 $( [ "$install" = 1 ] || echo "  (dependencies not installed: scripts/stack.sh install)" )$( [ "$db" = 1 ] || echo "  (databases not copied: $0 db $root $off)" )
 Both instances push to the same remotes. Before each workflow step, bring an instance up to date with
   scripts/instance.sh sync        # commit the ledger, merge + push the hub, fast-forward every service repo
-Feature numbers are claimed through origin by scripts/status.sh claim (Step 2), so two instances never take the same one.
+Feature numbers are claimed through origin by scripts/status.sh claim (Step 2) and spec files by scripts/lock.sh claim
+(Step 1), so two instances never take the same number or design against the same spec at once.
 EOF
 }
 

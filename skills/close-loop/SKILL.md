@@ -113,8 +113,13 @@ scripts/metrics.sh render
 
 - If the feature changed any shared convention (naming, module layout, storage patterns, env conventions): update `CONVENTIONS.md`, update the affected canonical file(s) in `repo-instructions/`, and remind the user to copy them into the service repo(s). The hub copies are canonical.
 
-## 10. Finish
+## 10. Release the spec locks
 
-Report (under 40 lines — it is all the main session receives): prompts flipped to Verified, branches merged (merge commits per repo, pushed to origin or **PUSH FAILED**), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), metrics board regenerated (plus any price-row warning it printed), archived files, and any convention syncs performed. Flag anything the specs still don't capture.
+- Run `scripts/lock.sh release <feature> --no-push` (the feature's kebab name). `--no-push` is deliberate: it drops the row in the working tree only, so the release leaves with the close-out commit and never reaches origin before the reconciled spec does. Never push it separately from here.
+- Then `scripts/lock.sh check`: an `OVERLAP` line (a design that was waiting on this feature's files and must now re-validate), an `ORPHAN` line (another feature already archived but still on the board) or a `STALE` line is reported in the final report, not fixed here; a `CONFLICT` line names it first.
+
+## 11. Finish
+
+Report (under 40 lines — it is all the main session receives): prompts flipped to Verified, branches merged (merge commits per repo, pushed to origin or **PUSH FAILED**), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), metrics board regenerated (plus any price-row warning it printed), archived files, spec locks released (and what `lock.sh check` reported), and any convention syncs performed. Flag anything the specs still don't capture.
 
 The loop is closed. The next feature's design (Step 1) starts in a **new session** on an Advanced-tier model.

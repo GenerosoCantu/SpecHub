@@ -26,6 +26,7 @@ What sets it apart from other spec-driven approaches: a written determinism cont
 | `scripts/dispatch.sh` | Runs each prompt as a detached headless session of your agent CLI in its own worktree, in parallel; records every run in the prompt file; merges verified branches and cleans up |
 | `scripts/stack.sh` | Starts/stops every service in `spechub.conf`, from the main checkout or from a feature worktree |
 | `scripts/changelog.sh` | The only way the changelog is written — one ≤ 900-char entry per feature |
+| `scripts/status.sh`, `scripts/lock.sh` | Feature numbers and spec-file locks that go through origin, so several developers or instances of the stack never take the same number, see who is designing against which spec, and never cascade two features into the same spec file at once |
 | `templates/` | The fixed shapes of every document; the determinism contract lives in their headers |
 | `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.github/agents/` | One canonical instruction file, with the pointers and agent wrappers each tool expects |
 
@@ -76,7 +77,8 @@ git add -A && git commit -m "spec hub: bootstrap"                       # commit
 
 ```
 Step  Who                  Run                                  Result
-1.    agent (Advanced)     design Features/FEATURE-{name}.md    the feature file (WORKFLOW.md Step 1)
+1.    agent (Advanced)     design Features/FEATURE-{name}.md    the feature file (WORKFLOW.md Step 1); the session first posts
+                                                                scripts/lock.sh intend — who designs against which spec, blocks nobody
 2.    agent (Standard)     cascade-and-prompt {name}            spec edits + Prompts/PROMPT-{service}-{name}.md
 3.    agent (Standard)     dispatch-prompts                     headless sessions in worktrees; services restart from them
       you                  scripts/dispatch.sh verify <prompt>  after checking the running services by hand
@@ -106,6 +108,7 @@ WORKFLOW.md                         Steps 0–4, context budget, naming, session
 SPEC-GUIDELINES.md                  what goes in the overview vs a service spec
 CONVENTIONS.md                      shared conventions (generated in Step 0)
 STATUS.md                           live feature status board
+LOCKS.md                            spec locks board — which in-flight feature holds which spec file (written by scripts/lock.sh)
 CHANGELOG.md                        implementation history (written only by scripts/changelog.sh)
 00-architecture-overview.md         system map (generated in Step 0)
 NN-{service}.md [+ NN-{service}/]   one spec per service (split into a directory when large)
@@ -117,7 +120,7 @@ bootstrap/facts/                    generated fact sheets, one per service
 archive/                            rolled changelog entries and old material — not a source of truth
 skills/                             bootstrap-specs, cascade-and-prompt, dispatch-prompts, close-loop
                                     (symlinked from .claude/skills, .github/skills, .codex/skills)
-scripts/                            bootstrap.sh, stack.sh, dispatch.sh, changelog.sh
+scripts/                            bootstrap.sh, stack.sh, dispatch.sh, changelog.sh, status.sh, lock.sh, instance.sh, metrics.sh
 .claude/                            settings.json, agents/{spec-writer,hub-ops}.md
 .github/agents/                     Copilot wrappers for the same subagents (*.agent.md)
 ```

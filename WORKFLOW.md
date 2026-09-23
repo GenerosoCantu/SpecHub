@@ -10,10 +10,10 @@ This document describes the end-to-end process for bootstrapping the spec hub an
 
 ```
 0. BOOTSTRAP → Once per project (`scripts/bootstrap.sh init` + `bootstrap-specs` skill): detect the repos, write spechub.conf, extract fact sheets, generate every spec, the overview, CONVENTIONS.md, STATUS.md and repo-instructions/
-1. DESIGN    → Create Features/FEATURE-{name}.md (or Features/BUG-{name}.md for a defect in closed work — see Bugs)
+1. DESIGN    → The session posts its intent first (`scripts/lock.sh intend` — a notice on the spec areas, warns about overlaps, blocks nobody), then creates Features/FEATURE-{name}.md (or Features/BUG-{name}.md for a defect in closed work — see Bugs)
 2. CASCADE & PROMPT → One session, one pass (`cascade-and-prompt` skill): 2a update the relevant service spec(s) + STATUS.md row; 2b generate Prompts/PROMPT-{service}-{feature}.md (one per service) from the cascaded spec; the cascade summary comes back with the prompts
 3. IMPLEMENT → Dispatch all prompts from the hub (`dispatch-prompts` skill → `scripts/dispatch.sh`): one worktree + headless session per prompt, in parallel; services restart from the worktrees; verify by hand (rejections are recorded and fixed here)
-4. CLOSE     → Record the verification, merge branches into the base branch and push it (services back on main checkouts, worktree folders deleted), update specs + STATUS.md + CHANGELOG, sync repo instructions, archive feature file & prompts
+4. CLOSE     → Record the verification, merge branches into the base branch and push it (services back on main checkouts, worktree folders deleted), update specs + STATUS.md + CHANGELOG, sync repo instructions, archive feature file & prompts, release the spec locks
 ```
 
 **One step per session, one model per step.** See [Context Budget](#context-budget) — it is part of the process, not advice.
@@ -62,6 +62,8 @@ The hub starts from the code, not from a blank page. The script does the determi
 
 Before touching any spec or writing any code, document the feature in the `Features/` folder. This file is the scratchpad where all design decisions are made before they become commitments.
 
+**The session posts its intent first.** The design session's first action, before it reads a spec, is `scripts/lock.sh intend <feature-name> <spec-or-service>...` — the kebab name the feature file will have, and the services (or module files, when already known) the design is expected to touch; coarse is fine, and a later `intend` adds what the design discovers. It adds a **designing** row to `LOCKS.md` (feature, spec areas, who, since) and pushes it through origin exactly like a feature number, so every instance of the stack sees who is designing against what. It is a notice, not a lock: it warns about every overlapping row — another design in the same area, or a file held by a feature between cascade and close-out — and refuses nothing. The session reports any overlap to the user before designing; that conversation on day one is the whole point. The spec is not edited during design, so a design can take days or never be cascaded without blocking anyone. The row is upgraded to **held** by the cascade (2a) on the exact module files it edits — from there to close-out (4h) the file is genuinely held — and dropped when the feature closes, is staled, or the design is abandoned (`scripts/lock.sh release <name>`). `scripts/lock.sh list` shows the board; `scripts/lock.sh check <spec>` is a read-only look at one area.
+
 A feature file should cover:
 
 - **Description** — what the feature does from the user's perspective
@@ -95,7 +97,7 @@ Once design decisions are confirmed (the feature file has no open design decisio
 
 For a split spec: cascade into the relevant **module file(s)**. A new module gets its own file in the directory plus a row in the index file's File Map. Never re-add module content to the index.
 
-The feature's `STATUS.md` row is added first, before any spec edit, by `scripts/status.sh claim "<Feature name>" <service>...` — never by hand. The claim fast-forwards the hub to origin, takes the next free number, adds the In Flight row (each affected service Pending) and pushes it as its own commit. Every instance of the stack (another folder or another laptop, see `scripts/instance.sh`) has its own `STATUS.md`, so "next sequential number" read locally would give two instances the same number; the push to origin is what serializes them, and a rejected push retries on top of the other instance's claim. `--no-push` claims offline; `scripts/status.sh check` (also warned by `scripts/metrics.sh render`) then catches a collision when the hubs meet. Metrics are keyed by the feature slug, not the number, so a renumbered row moves no cost.
+The feature's `STATUS.md` row is added first, before any spec edit, by `scripts/status.sh claim "<Feature name>" <service>...` — never by hand. Right after it, `scripts/lock.sh claim <feature> <file>...` names every spec / module file the cascade is about to edit: it upgrades the feature's **designing** row to **held** on exactly those files (the coarse intent is replaced), or extends an existing hold. From here to close-out the file is half-written, so it refuses when another feature *holds* one of them — nothing is cascaded over a held file — and only warns when another feature is merely designing against it (that design re-validates after this one closes). The claim fast-forwards the hub to origin, takes the next free number, adds the In Flight row (each affected service Pending) and pushes it as its own commit. Every instance of the stack (another folder or another laptop, see `scripts/instance.sh`) has its own `STATUS.md`, so "next sequential number" read locally would give two instances the same number; the push to origin is what serializes them, and a rejected push retries on top of the other instance's claim. `--no-push` claims offline; `scripts/status.sh check` (also warned by `scripts/metrics.sh render`) then catches a collision when the hubs meet. Metrics are keyed by the feature slug, not the number, so a renumbered row moves no cost.
 
 **Cascade summary — record, don't pause.** Note every spec file touched (with the `PENDING` contracts added), any index-table row, the `STATUS.md` row, and every place the cascade adapted the feature file's proposal to an existing spec convention. This summary is the first part of the step's final report, next to the generated prompts; the session continues straight into 2b. The review happens once, on spec and prompts together, before Step 3 is started in its own session — a wrong name found then is fixed in the spec and the affected prompt regenerated (cheap, on the Standard tier). If the user explicitly asks for a checkpoint after the cascade, stop there instead.
 
@@ -225,6 +227,9 @@ After the implementation is verified, do all of the following **in a single pass
 ### 4g. Sync repo instruction files if conventions changed
 - If the feature changed any shared convention (naming rules, module layout, storage patterns, env conventions), update `CONVENTIONS.md` and the affected canonical repo instruction file(s) in `repo-instructions/`, then copy the updated file into the service repo. The hub copies are canonical; the per-repo instruction files must never drift from them.
 
+### 4h. Release the spec locks
+- `scripts/lock.sh release <feature> --no-push` drops the feature's `LOCKS.md` row in the working tree only: it leaves with the close-out commit, so the hold disappears from origin together with the reconciled spec and never before it — a design that was waiting on the file re-validates against the reconciled version. `scripts/lock.sh check` then reports any row whose feature file is already archived (an orphan to release), any design still overlapping a hold, or a row older than `LOCK_STALE_DAYS` (reminders, not errors).
+
 > **Why archive instead of delete?** An archived feature file is a *frozen historical record*, not a living document — the banner makes that explicit, which neutralizes the risk of two diverging sources of truth. The service spec remains the only place describing *what currently exists*; the archived file preserves *how the decision was reached*.
 
 > **Why do all of these in one pass?** Steps 4a–4g are all consequences of the same event — the feature being implemented. Doing them in one session ensures they are always consistent with each other. If you update the spec but forget to archive the feature file, the next person to open `Features/` will not know whether that feature is pending or already done.
@@ -255,7 +260,7 @@ After the implementation is verified, do all of the following **in a single pass
 | Situation | Session | Model |
 |-----------|---------|-------|
 | Bootstrapping the hub (step 0) | New session; `bootstrap-specs` skill forks one `spec-writer` per service. **End the session when the files are on disk.** | Standard |
-| Designing a feature (writing the feature file, step 1) | New session — the feature file is upstream of the spec and the code, so it must not inherit another feature's context. Code reconnaissance via `Explore` subagents. **End the session when the file is written.** | Advanced |
+| Designing a feature (writing the feature file, step 1) | New session — the feature file is upstream of the spec and the code, so it must not inherit another feature's context. Its first action is `scripts/lock.sh intend` (a notice, not a lock). Code reconnaissance via `Explore` subagents. **End the session when the file is written.** | Advanced |
 | Cascading into the specs and generating prompts (step 2) | New session — one session for both halves, `cascade-and-prompt` skill. **End the session when the prompts are on disk.** | Standard |
 | Dispatching prompts (step 3) | New session; `dispatch-prompts` skill runs forked in a `hub-ops` subagent — the main session gets the report | Standard |
 | Implementing any prompt (backend or frontend) | Headless session dispatched from the hub (`scripts/dispatch.sh run`), in its own worktree; all prompts of a feature run in parallel | Per the prompt header (Light by default) |
@@ -273,6 +278,7 @@ After the implementation is verified, do all of the following **in a single pass
 
 - **When to stale:** a pending feature is deprioritized indefinitely, superseded by another design, or blocked on a decision that will not be made soon. Move the file to `Features/Staled/` and add a one-line note at top: date staled + reason.
 - **Status board:** update the feature's `STATUS.md` row to `⏸ Staled` (or remove the row if it never left design). Remove any `PENDING` markers the feature added to service specs during Cascade — staled designs must not linger in the source of truth.
+- **Spec locks:** `scripts/lock.sh release <feature>` — a parked design keeps no row on the board. Reviving it starts with a new `scripts/lock.sh intend` in the revival session, which is also how you learn who has moved into that area since.
 - **Reviving:** a staled feature must be **re-validated before reuse**. The specs have moved since it was written; re-read the current spec / module file(s) it touches, correct the design against them, then move it back to `Features/` and restore its `STATUS.md` row to Pending. Never generate prompts directly from a staled file.
 
 ---

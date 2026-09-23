@@ -38,6 +38,9 @@ REPOS_ROOT="${SPECHUB_REPOS_ROOT:-..}"
 # SERVICES rows such as its own database. `scripts/instance.sh init <new-root> <offset>` creates one;
 # `scripts/instance.sh sync` brings an instance up to date before each workflow step.
 
+# Days a spec lock (LOCKS.md, scripts/lock.sh) may be held before `check` calls it stale — a reminder only.
+#LOCK_STALE_DAYS="14"
+
 # Gitignored files copied from a repo's main checkout into each fresh worktree so builds,
 # tests and dev servers work there (glob patterns, space separated).
 WORKTREE_COPY_FILES=".env .env.* application-local.properties"

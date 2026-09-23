@@ -42,6 +42,7 @@
 
 ## Outstanding work (checklist)
 
+- [x] Intent posted: `scripts/lock.sh intend {name} {services}` (Step 1, the design session's first action; Step 2a upgrades it to a hold — Class B — or releases it — Class A)
 - [ ] Class B only: cascade the corrected contract into {spec / module file(s)} as PENDING (Step 2a)
 - [ ] Add row to STATUS.md
 - [ ] Generate Prompts/PROMPT-{service}-{bug-name}.md (Step 2b, same session)
