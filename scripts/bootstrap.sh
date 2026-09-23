@@ -25,6 +25,12 @@
 # of every supported framework over every source file, so nothing depends on the detection being
 # right — a wrong guess only affects the start/install commands, which you fix in spechub.conf.
 #
+# spechub.conf never holds a machine-specific path: init writes REPOS_ROOT relative to the hub folder
+# ("${SPECHUB_REPOS_ROOT:-..}") and the fact sheets show paths relative to it, so a clone of the hub on
+# another machine, by another user, or as a second instance works unchanged. A checkout laid out
+# differently sets SPECHUB_REPOS_ROOT in the environment or REPOS_ROOT in its gitignored spechub.local.conf,
+# which every command here reads (scripts/verify.sh portable is the gate).
+#
 # Compatible with the macOS system bash (3.2). Needs git, find, grep, sed, awk, sort.
 
 set -euo pipefail
@@ -327,7 +333,7 @@ EOF
     printf '# Push the base branch to origin after every Step 4 merge (1 = yes). The merge fast-forwards the local base\n# to origin first and refuses to run if it has diverged; `dispatch.sh merge --no-push` keeps one merge local.\nMERGE_PUSH="1"\n\n'
     printf '# Headless coding agent that runs the prompts: claude | codex | copilot (AGENT_BIN overrides the PATH lookup).\nAGENT_CLI="%s"\n#AGENT_BIN=""\n\n' "$agent"
     printf '# Model per tier for that CLI. Prompts name a tier (Light | Standard | Advanced); leave commented for the defaults.\n#MODEL_LIGHT=""\n#MODEL_STANDARD=""\n#MODEL_ADVANCED=""\n\n'
-    printf '# Parent directory of the service repos; relative `dir` entries resolve against it.\nREPOS_ROOT="%s"\n\n' "$root"
+    printf '# Parent directory of the service repos; relative `dir` entries resolve against it. Kept relative to\n# this hub folder so every clone works unchanged; a checkout laid out differently sets SPECHUB_REPOS_ROOT\n# in the environment or REPOS_ROOT in its gitignored spechub.local.conf. Never commit an absolute path here.\nREPOS_ROOT="${SPECHUB_REPOS_ROOT:-%s}"\n\n' "$(rel_from_hub "$root")"
     printf '# Gitignored files copied from each main checkout into its worktrees (glob patterns).\nWORKTREE_COPY_FILES=".env .env.* application-local.properties"\n\n'
     printf '# Dependency directories linked from the main checkout into worktrees (DISPATCH_DEPS=install reinstalls instead).\nWORKTREE_LINK_DIRS="node_modules .venv vendor"\n\n'
     printf '# name|dir|start command|port|label|group|install command   (group: static | backend | frontend)\n'
@@ -360,12 +366,34 @@ EOF
 # services table in AGENTS.md
 # ---------------------------------------------------------------------------
 
+# Path of $1 relative to the hub folder ("..", "../repos", …) — what spechub.conf stores, so the
+# committed file holds no machine-specific path.
+rel_from_hub() {
+  local target="$1" base up="" rest
+  base="$(cd "$HUB_DIR" && pwd -P)"
+  while [ "$base" != / ]; do
+    case "$target/" in "$base/"*) break ;; esac
+    base="$(dirname "$base")"; up="$up../"
+  done
+  rest="${target#"$base"}"; rest="${rest#/}"
+  rest="$up$rest"; rest="${rest%/}"
+  printf '%s' "${rest:-.}"
+}
+
+# REPOS_ROOT-relative form of an absolute path (".", "repo", "repo/apps/x"); outside REPOS_ROOT it stays absolute.
+rel_to_root() { case "$1" in "$REPOS_ROOT") printf '.' ;; "$REPOS_ROOT"/*) printf '%s' "${1#"$REPOS_ROOT"/}" ;; *) printf '%s' "$1" ;; esac; }
+
 load_conf() {
   [ -f "$CONF" ] || die "spechub.conf not found — run init first."
   # shellcheck disable=SC1090
   . "$CONF"
+  # Per-checkout overrides (REPOS_ROOT, PORT_OFFSET, extra SERVICES rows) — gitignored.
+  # shellcheck disable=SC1091
+  [ -f "$HUB_DIR/spechub.local.conf" ] && . "$HUB_DIR/spechub.local.conf"
   REPOS_ROOT="${REPOS_ROOT:-$HUB_DIR/..}"
-  case "$REPOS_ROOT" in /*) ;; *) REPOS_ROOT="$(cd "$HUB_DIR/$REPOS_ROOT" && pwd)" || die "REPOS_ROOT not found: $HUB_DIR/$REPOS_ROOT" ;; esac
+  case "$REPOS_ROOT" in /*) ;; *) REPOS_ROOT="$HUB_DIR/$REPOS_ROOT" ;; esac
+  # Physical path, so it prefix-matches the git roots rel_to_root shortens.
+  REPOS_ROOT="$(cd "$REPOS_ROOT" && pwd -P)" || die "REPOS_ROOT not found: $REPOS_ROOT"
 }
 conf_services() {  # name|dir|start|port|label|group|install — comment/blank lines removed
   printf '%s\n' "$SERVICES" | grep -v '^[[:space:]]*#' | grep '|'
@@ -627,10 +655,10 @@ write_facts() {  # write_facts <name> <dir> <start> <port> <label> <group> <inst
   mkdir -p "$FACTS_DIR"
   {
     printf '# Fact sheet — `%s`\n\n' "$name"
-    printf '> Mechanical extraction by `scripts/bootstrap.sh facts` from `%s` @ `%s` (%s). Regenerate, never edit. The bootstrap-specs skill writes the service spec from this sheet plus the files it names.\n\n' "$dir" "$sha" "$branch"
+    printf '> Mechanical extraction by `scripts/bootstrap.sh facts` from `%s` @ `%s` (%s). Regenerate, never edit. The bootstrap-specs skill writes the service spec from this sheet plus the files it names. Paths are relative to `REPOS_ROOT` (`scripts/stack.sh root` prints it for this checkout).\n\n' "$(rel_to_root "$dir")" "$sha" "$branch"
     printf '## 1. Identity\n\n| Field | Value |\n|---|---|\n'
     printf '| Service | `%s` |\n| Label | %s |\n| Group | %s |\n| Directory | `%s` |\n| Git root | `%s` |\n| Path in repo | %s |\n| Remote | `%s` |\n| Branch @ HEAD | `%s` @ `%s` |\n| Start | `%s` |\n| Install | `%s` |\n| Port | %s |\n| Instruction files | %s |\n\n' \
-      "$name" "$label" "$group" "$dir" "$groot" "${sub:+\`$sub/\`}${sub:-(repo root)}" "$remote" "$branch" "$sha" "$start" "$install" "$port" "${instr:-none}"
+      "$name" "$label" "$group" "$(rel_to_root "$dir")" "$(rel_to_root "$groot")" "${sub:+\`$sub/\`}${sub:-(repo root)}" "$remote" "$branch" "$sha" "$start" "$install" "$port" "${instr:-none}"
     printf '## 2. Stack\n\n| Field | Value |\n|---|---|\n| Language | %s |\n| Framework | %s |\n| Manifest | `%s` |\n| Source root | `%s` |\n| Source files | %s |\n\n' "$lang" "$fw" "$manifest" "$sr" "$(count_src "$dir")"
     local scripts; scripts="$(facts_scripts "$dir")"
     if [ -n "$scripts" ]; then printf '### Scripts\n\n| Script | Command |\n|---|---|\n%s\n\n' "$scripts"; fi

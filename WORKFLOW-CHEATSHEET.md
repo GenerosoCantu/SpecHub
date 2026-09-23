@@ -16,7 +16,7 @@ A one-page view of `WORKFLOW.md` for people: which step, which session, which mo
 
 | # | Step | How to start it | Session | Model |
 |---|---|---|---|---|
-| 0 | **Bootstrap** the hub from the repos | `scripts/bootstrap.sh init`, then the `bootstrap-specs` skill | **New.** Forks one `spec-writer` per service. End the session when the files are on disk. | Standard (`sonnet`) |
+| 0 | **Bootstrap** the hub from the repos | `scripts/bootstrap.sh init`, then the `bootstrap-specs` skill | **New.** Forks one `spec-writer` per service. End the session when the files are on disk. Clone the hub next to the service repos, or set `REPOS_ROOT` in the gitignored `spechub.local.conf`. | Standard (`sonnet`) |
 | 1 | **Design** the feature → `Features/FEATURE-{name}.md` (a bug in closed work → `Features/BUG-{name}.md`, see [Bugs](#bugs)) | Ask in plain language (no skill). Use `Explore` subagents to read the code. | **New.** It must not carry context from another feature. End the session when the file is written. | Advanced (`opus`) |
 | 2 | **Cascade & Prompt**: spec edits + `STATUS.md` row, then `Prompts/PROMPT-*.md` | `cascade-and-prompt` skill | **New.** One pass does both halves. End the session when the prompts are on disk. | Standard (`sonnet`) |
 | 3 | **Dispatch**: run prompts in worktrees, in parallel | `dispatch-prompts` skill (`scripts/dispatch.sh run --all`, `wait`) | **New.** Forks into `hub-ops`. | Standard (`sonnet`; `hub-ops` is set to `sonnet`) |

@@ -27,8 +27,10 @@ AGENT_CLI="claude"
 
 # Parent directory of the service repos. Relative `dir` entries below resolve against it. A relative
 # REPOS_ROOT resolves against this hub folder (e.g. ".." when the hub sits next to the repos), so a clone
-# of the hub at the same place under another root finds that root's repos.
-REPOS_ROOT="$HOME/projects/my-platform"
+# of the hub at the same place under another root finds that root's repos. Never commit an absolute
+# path: a checkout laid out differently sets SPECHUB_REPOS_ROOT in the environment or REPOS_ROOT in its
+# gitignored spechub.local.conf.
+REPOS_ROOT="${SPECHUB_REPOS_ROOT:-..}"
 
 # Several instances of the whole stack on one machine (another folder, another checkout): each instance
 # is its own root with its own hub, and its gitignored spechub.local.conf sets PORT_OFFSET (every port

@@ -63,9 +63,9 @@ Steps 1–4 repeat for every feature. See `WORKFLOW.md` for the full detail behi
 **Step 0 — once per project:**
 
 ```bash
-git clone https://github.com/GenerosoCantu/SpecHub.git my-platform-specs
+git clone https://github.com/GenerosoCantu/SpecHub.git my-platform-specs   # clone the hub next to the service repos, or set REPOS_ROOT in spechub.local.conf
 cd my-platform-specs
-scripts/bootstrap.sh init ~/projects/my-platform --name "My Platform"   # detect repos + agent CLI, write spechub.conf, install, extract facts
+scripts/bootstrap.sh init ~/projects/my-platform --name "My Platform"   # detect repos + agent CLI, write spechub.conf (REPOS_ROOT relative to the hub), install, extract facts
 $EDITOR spechub.conf                                                    # drop non-services, fix commands/ports; order = spec numbering
 scripts/stack.sh start && scripts/stack.sh status                       # check the stack runs from the hub
 <your agent>                                                            # in the hub, Standard tier: run the bootstrap-specs skill

@@ -17,7 +17,10 @@
 #   scripts/verify.sh mechanisms            every overview section 10 entry is well formed: the four
 #                                           keys, >= 2 services from spechub.conf, evidence on both
 #                                           sides, contiguous numbering
-#   scripts/verify.sh all                   manifest + facts + records + headings + mechanisms
+#   scripts/verify.sh portable              no tracked hub file outside archive/ and the frozen history
+#                                           folders holds a machine-specific path ($HOME, or a /Users/…
+#                                           or /home/… prefix), and spechub.conf keeps REPOS_ROOT relative
+#   scripts/verify.sh all                   manifest + facts + records + headings + mechanisms + portable
 #
 # Compatible with the macOS system bash (3.2).
 
@@ -373,14 +376,49 @@ cmd_diff() {
   fi
 }
 
+# ---------------------------------------------------------------- portable (no machine-specific paths)
+# A hub cloned on another machine, by another user, or as a second instance must work without editing a
+# committed file. Frozen history (archive/, Features/Implemented, Features/Staled, Prompts/Implemented)
+# and the machine-written metrics/ are not checked. A home-directory path is a macOS or Linux home prefix
+# that STARTS a path (after a quote, backtick, space, `=` or the line start), so a route segment such as
+# `…/management/Users/…` never matches.
+cmd_portable() {
+  head_ "portable — no machine-specific path in a tracked hub file"
+  local files hits home_re
+  files="$(git -C "$HUB_DIR" ls-files | grep -vE '^(archive|Features/Implemented|Features/Staled|Prompts/Implemented|metrics)/' | grep -vE '(^|/)\.DS_Store$')"
+  [ -n "$files" ] || { bad "no tracked files — is $HUB_DIR a git repository?"; return; }
+  home_re='(^|[^[:alnum:]_./-])/(Users|home)/[^/[:space:]`"]+/'
+  hits="$( (cd "$HUB_DIR" && printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 grep -nE "$home_re" 2>/dev/null) || true)"
+  if [ -n "$HOME" ]; then
+    hits="$hits
+$( (cd "$HUB_DIR" && printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 grep -nF "$HOME" 2>/dev/null) || true)"
+  fi
+  hits="$(printf '%s\n' "$hits" | grep . | sort -u || true)"
+  if [ -z "$hits" ]; then ok "no home-directory path in $(printf '%s\n' "$files" | grep -c .) tracked files"
+  else
+    bad "machine-specific path(s) — regenerate with scripts/bootstrap.sh facts, or write the path relative to REPOS_ROOT:"
+    printf '%s\n' "$hits" | head -20 | cut -c1-160 | sed 's/^/        /'
+  fi
+  if [ -f "$CONF" ]; then
+    local line; line="$(grep -E '^[[:space:]]*REPOS_ROOT=' "$CONF" | tail -1)"
+    case "$line" in
+      '') ok "spechub.conf leaves REPOS_ROOT to its default (the hub's parent)" ;;
+      *'REPOS_ROOT="/'*|*"REPOS_ROOT='/"*|*'REPOS_ROOT=/'*|*'$HOME'*|*'~'*)
+        bad "spechub.conf commits an absolute REPOS_ROOT: $line — write it relative to the hub (\"\${SPECHUB_REPOS_ROOT:-..}\") and put a machine's own layout in spechub.local.conf" ;;
+      *) ok "spechub.conf REPOS_ROOT is relative: $line" ;;
+    esac
+  fi
+}
+
 case "${1:-all}" in
   manifest) cmd_manifest ;;
   facts)    shift || true; cmd_facts "$@" ;;
   records)  shift || true; cmd_records "$@" ;;
   headings) cmd_headings ;;
   mechanisms) cmd_mechanisms ;;
+  portable) cmd_portable ;;
   diff)     shift; [ "$#" -eq 2 ] || { echo "usage: verify.sh diff <dirA> <dirB>" >&2; exit 2; }; cmd_diff "$1" "$2" ;;
-  all)      cmd_manifest; cmd_facts; cmd_records; cmd_headings; cmd_mechanisms ;;
+  all)      cmd_manifest; cmd_facts; cmd_records; cmd_headings; cmd_mechanisms; cmd_portable ;;
   *)        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 

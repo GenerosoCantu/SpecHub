@@ -1,5 +1,8 @@
-.DS_Store
-.logs/
-.run/
-.dispatch/
+# Per-checkout state — never shared through the hub repo.
 spechub.local.conf
+.dispatch/
+.run/
+.logs/
+
+# OS / editor noise
+.DS_Store
