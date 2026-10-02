@@ -6,12 +6,16 @@
 # cost differs from the reported one by more than $0.0001.
 #
 # Cache rates are multipliers of the input price, applied by the script:
-#   cache read      cread_mult x in   (0.1 for every current model; 0.025 on Claude Fable 5.1)
+#   cache read      cread_mult x in   (0.1 for most models; 0.05 on Claude Opus 5.5; 0.025 on Claude Fable 5.1)
 #   cache write 5m  1.25x in
 #   cache write 1h  2.0x  in
 #
 # A model with no row here still gets full token totals; its cost shows n/a and the script warns
-# once. It NEVER estimates. Add a row rather than letting a model go unpriced.
+# once. It NEVER estimates. Add a row rather than letting a model go unpriced:
+#   scripts/metrics.sh prices                                lists the models the ledger used with no row
+#   scripts/metrics.sh price <model> <in> <out> [cread_mult]  adds/replaces a row, verified today
+# The SessionStart hook runs `prices --hook`, so a session is told as soon as a new model appears,
+# and the close-loop skill prices any model still missing before it finishes.
 #
 # WHAT CHANGING THIS FILE DOES: every dollar figure on METRICS.md is derived at render time, so
 # editing a price and re-running `render` re-prices all of history. The price-free columns (raw
@@ -27,6 +31,8 @@
 # claude-opus-5 is NOT covered by it, so re-check that row by hand when prices may have moved.
 #
 # model<TAB>in<TAB>out<TAB>cread_mult<TAB>verified
+claude-sonnet-5-5	2.00	10.00	0.1	2026-10-02
+claude-opus-5-5	4.00	20.00	0.05	2026-09-23
 claude-opus-5	5.00	25.00	0.1	2026-09-12
 claude-opus-4-8	5.00	25.00	0.1	2026-09-12
 claude-opus-4-7	5.00	25.00	0.1	2026-09-12

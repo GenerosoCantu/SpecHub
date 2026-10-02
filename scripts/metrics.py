@@ -79,6 +79,8 @@ def cost_of(model, tk):
     cost = (in*Pin + out*Pout + cache_read*Pin*m + w5*Pin*1.25 + w1*Pin*2.0) / 1e6
     """
     p = PRICE.get(norm_model(model))
+    if not p and (model == '<synthetic>' or not any(tk.get(k, 0) for k in TOKEN_KEYS)):
+        return 0.0   # Claude Code's placeholder for locally generated turns: no model, no tokens
     if not p:
         if model and model not in _unpriced:
             _unpriced.add(model)
@@ -265,6 +267,10 @@ def read_ledger(path=LEDGER):
         if e.get('schema', 1) > SCHEMA:
             die('ledger holds schema v%s; this script speaks v%s. Upgrade scripts/metrics.py.'
                 % (e['schema'], SCHEMA))
+        # A derived cost is a view of the stored tokens, never stored truth: re-derive it from
+        # today's prices.tsv, so a price row added later prices every session recorded before it.
+        if e.get('cost_basis') == 'derived' and e.get('models'):
+            e['cost_usd'] = sum_models(e['models'])
         sid = e.get('session_id') if e.get('event') == 'hub_session' else None
         if sid:
             i = best.get(sid)
@@ -585,9 +591,24 @@ def parse_transcript(path):
             txt = content if isinstance(content, str) else ' '.join(
                 b.get('text', '') for b in (content if isinstance(content, list) else [])
                 if isinstance(b, dict) and b.get('type') == 'text')
-            for m in re.finditer(r'<command-name>/([a-z0-9\-]+)</command-name>', txt or ''):
-                if m.group(1) in STEP_OF:
-                    skills.add(m.group(1))
+            # Two spellings of a typed skill: the <command-name> marker, and — for a skill that
+            # runs forked (dispatch-prompts, close-loop) — the bare "/skill args" the user typed,
+            # logged as its own user message. Missing the second left most dispatch sessions
+            # unattributed. Only a message that STARTS with the slash counts, never prose.
+            typed = [(m.group(1), '') for m in
+                     re.finditer(r'<command-name>/([a-z0-9\-]+)</command-name>', txt or '')]
+            m = re.match(r'\s*/([a-z0-9\-]+)\b(.*)', txt or '', re.S)
+            if m:
+                typed.append((m.group(1), m.group(2)))
+            for name, args in typed:
+                if name not in STEP_OF:
+                    continue
+                skills.add(name)
+                for fe in KNOWN_FEATURES:
+                    if fe in args:
+                        touched[fe] += 3
+                        touched_any[fe] += 3
+                        break
 
     skill = sorted(skills & set(STEP_OF))[0] if (skills & set(STEP_OF)) else None
     step = STEP_OF.get(skill)
@@ -641,7 +662,7 @@ def session_event(path, backfilled=False):
     return ev
 
 
-def stale_transcripts(evs, extra=()):
+def stale_transcripts(evs, extra=(), force=False):
     """Transcripts with no hub_session row, or one recorded from fewer bytes than are on disk.
 
     A transcript only grows — a resumed session, a forked subagent finishing late — so the byte
@@ -653,13 +674,38 @@ def stale_transcripts(evs, extra=()):
     out = []
     for p in paths:
         old = have.get(os.path.basename(p)[:36])
-        if old and old.get('transcript_bytes') == transcript_bytes(p):
+        if old and not force and old.get('transcript_bytes') == transcript_bytes(p):
             continue
         out.append((p, old))
     return out
 
 
-def sync_transcripts(extra=(), quiet=False, backfilled=False):
+def fill_runs(evs):
+    """Dispatch rows recorded without usage (a worker that exited before reporting) whose run
+    log is on disk after all: fill the empty fields from it. Only nulls are filled — the recorded
+    result and diagnosis stand. Returns how many rows changed."""
+    n = 0
+    for e in evs:
+        if e.get('event') not in ('dispatch_run', 'dispatch_resume') or not e.get('run_id'):
+            continue
+        if e.get('cost_usd') is not None and e.get('models'):
+            continue
+        r = parse_run_json(os.path.join(HUB, '.dispatch', 'runs', e['run_id'] + '.json'),
+                           e.get('agent') or 'claude')
+        got = False
+        for k in ('session_id', 'turns', 'tokens', 'models', 'duration_ms', 'api_ms',
+                  'cost_usd', 'cost_basis'):
+            if e.get(k) is None and r.get(k) is not None:
+                e[k] = r[k]
+                got = True
+        if got:
+            if r['models'] and not e.get('model'):
+                e['model'] = max(r['models'], key=lambda m: cost_of(m, r['models'][m]) or 0)
+            n += 1
+    return n
+
+
+def sync_transcripts(extra=(), quiet=False, backfilled=False, force=False):
     """Bring the ledger up to date with every transcript on disk.
 
     The SessionEnd hook is the intended recorder, but it does not fire when the IDE window is
@@ -668,14 +714,17 @@ def sync_transcripts(extra=(), quiet=False, backfilled=False):
     call this, and whichever runs next records what the others missed.
     """
     evs = read_ledger()
+    filled = fill_runs(evs)
+    if filled and not quiet:
+        warn('%d dispatch run(s) filled from their run logs.' % filled)
     fresh, drop = {}, set()
-    for p, old in stale_transcripts(evs, extra):
+    for p, old in stale_transcripts(evs, extra, force):
         ev = session_event(p, backfilled=backfilled or bool(old and old.get('backfilled')))
         if ev:
             fresh[ev['session_id']] = ev
             drop |= {ev['session_id'], os.path.basename(p)[:36]}
     if not fresh:
-        if len(evs) < ledger_lines():   # a union merge left duplicates: persist read_ledger's cleanup
+        if filled or len(evs) < ledger_lines():   # filled rows, or a union merge's duplicates to drop
             rewrite(evs)
         return 0
     evs = [e for e in evs if not (e.get('event') == 'hub_session' and e.get('session_id') in drop)]
@@ -710,7 +759,9 @@ def cmd_session(argv):
 
 def cmd_sync(argv):
     f = flags(argv)
-    n = sync_transcripts(quiet=f.get('quiet') == '1')
+    # --reparse: attribution rules improve and the transcripts are still on disk, so parse every
+    # transcript present again under today's rules. A session whose transcript is gone keeps its row.
+    n = sync_transcripts(quiet=f.get('quiet') == '1', force=bool(f.get('reparse')))
     if f.get('quiet') != '1':
         print('[metrics] %d hub session(s) recorded or updated.' % n)
     return 0
@@ -1098,15 +1149,20 @@ class Stats:
         return out
 
     def step_matrix(self):
-        """feature -> bucket -> cost. The 'for each step, for each feature' view."""
+        """feature -> bucket -> cost. The 'for each step, for each feature' view. A bucket whose
+        events exist but carry no cost (no price row, no reported cost) holds 'n/a'; a bucket
+        with no event at all is absent, so the board can tell "unpriced" from "no session"."""
         m = collections.defaultdict(lambda: collections.defaultdict(lambda: None))
         for e in self.hub + self.runs:
             b = self.bucket_of(e)
             fe = e.get('feature')
-            if b is None or not fe or e.get('cost_usd') is None:
+            if b is None or not fe:
                 continue
             cur = m[fe][b]
-            m[fe][b] = (cur or 0.0) + e['cost_usd']
+            if e.get('cost_usd') is None:
+                m[fe][b] = cur if isinstance(cur, float) else 'n/a'
+                continue
+            m[fe][b] = (cur if isinstance(cur, float) else 0.0) + e['cost_usd']
         return m
 
     def usage_by(self, keyfn):
@@ -1605,6 +1661,7 @@ def cmd_render(argv):
     mx = st.step_matrix()
     full = [fe for fe in st.features if mx.get(fe) and any(
         mx[fe].get(k) is not None for k in ('1', '2', '4'))]
+    cell = lambda v: money(v) if isinstance(v, float) else (v or '—')
     if full:
         A('## Per-feature step breakdown')
         A('')
@@ -1615,14 +1672,15 @@ def cmd_render(argv):
         A('| # | Feature | 1 design | 2 cascade | 3 dispatch (hub) | 3 runs | 4 close | Total |')
         A('|---|---------|---:|---:|---:|---:|---:|---:|')
         for fe in newest_first(full, st, numbers):
-            row, tsum = mx[fe], sum(v for v in mx[fe].values() if v)
+            row = mx[fe]
+            tsum = sum(v for v in row.values() if isinstance(v, float))
             n = num_for(fe, numbers)
             A('| %s | %s | %s | %s | %s | %s | %s | **%s** |'
-              % (n if n else '—', fe, money(row.get('1')), money(row.get('2')), money(row.get('3h')),
-                 money(row.get('3r')), money(row.get('4')), money(tsum)))
+              % (n if n else '—', fe, cell(row.get('1')), cell(row.get('2')), cell(row.get('3h')),
+                 cell(row.get('3r')), cell(row.get('4')), money(tsum)))
         A('')
-        hub_only = sum(v for fe in full for k, v in mx[fe].items() if k != '3r' and v)
-        runs_only = sum(v for fe in full for k, v in mx[fe].items() if k == '3r' and v)
+        hub_only = sum(v for fe in full for k, v in mx[fe].items() if k != '3r' and isinstance(v, float))
+        runs_only = sum(v for fe in full for k, v in mx[fe].items() if k == '3r' and isinstance(v, float))
         if runs_only:
             A('Across these features the hub uses **%.0fx** the API-list value of the implementation '
               'runs (%s vs %s). A metrics system instrumenting only the dispatcher would measure the '
@@ -1706,6 +1764,79 @@ def stale_prices(days=90):
     return out
 
 
+# --------------------------------------------------------------------------- price rows
+def unpriced_models():
+    """{model: assistant-token total} for every model the ledger used that has no price row.
+    Aliases and placeholders ('?', 'unknown', '<synthetic>') are not models and are skipped."""
+    out = collections.Counter()
+    for e in read_ledger():
+        ms = dict(e.get('models') or {})
+        if not ms and e.get('model'):
+            ms = {e['model']: e.get('tokens') or {}}
+        for m, tk in ms.items():
+            n = norm_model(m)
+            if not n.startswith('claude-') or is_alias(n) or n in PRICE:
+                continue
+            out[n] += sum((tk or {}).get(k, 0) or 0 for k in TOKEN_KEYS)
+    return out
+
+
+def cmd_prices(argv):
+    """List the unpriced models. Exit 1 when there are any; --hook prints an instruction for the
+    session instead (SessionStart hook: stdout becomes session context) and always exits 0."""
+    f = flags(argv)
+    if not f.get('hook'):              # the hook runs right after `session`, which just synced
+        sync_quietly()
+    miss = unpriced_models()
+    if f.get('hook'):
+        if miss:
+            print('[metrics] metrics/prices.tsv has no row for: %s. Their sessions show cost n/a on '
+                  'METRICS.md. Look up the list price (USD per million tokens: input, output, cache-read '
+                  'multiplier) in the claude-api skill model table or the Anthropic pricing page, then run '
+                  '`scripts/metrics.sh price <model> <in> <out> <cread_mult>`. Never estimate: if the price '
+                  'cannot be verified, tell the user instead.' % ', '.join(sorted(miss)))
+        return 0
+    if not miss:
+        print('[metrics] every model in the ledger has a price row.')
+        return 0
+    print('[metrics] models with no price row (cost reads n/a):')
+    for m, n in sorted(miss.items()):
+        print('  %-28s %s tokens' % (m, kt(n)))
+    print('Add each with: scripts/metrics.sh price <model> <in> <out> <cread_mult>')
+    return 1
+
+
+def cmd_price(argv):
+    """Add or replace one price row, stamped verified today. Every dollar figure is derived at
+    render time, so the new row re-prices all of history on the next render."""
+    if len(argv) < 3:
+        die('usage: metrics.sh price <model> <in> <out> [cread_mult]   (USD per million tokens)')
+    model = norm_model(argv[0].strip())
+    if not re.match(r'^claude-[a-z0-9-]+$', model):
+        die('model id %r is not a claude-* id' % argv[0])
+    try:
+        pin, pout = float(argv[1]), float(argv[2])
+        crm = float(argv[3]) if len(argv) > 3 else 0.1
+    except ValueError:
+        die('prices must be numbers')
+    if pin <= 0 or pout <= 0 or not 0 < crm <= 1:
+        die('in/out must be > 0 and cread_mult in (0, 1]')
+    row = '%s\t%.2f\t%.2f\t%s\t%s' % (model, pin, pout, ('%g' % crm), datetime.date.today().isoformat())
+    lines = open(PRICES, encoding='utf-8').read().splitlines() if os.path.exists(PRICES) else []
+    old = next((i for i, ln in enumerate(lines) if ln.split('\t')[0].strip() == model), None)
+    if old is not None:
+        lines[old] = row
+    else:
+        first = next((i for i, ln in enumerate(lines) if ln.strip() and not ln.lstrip().startswith('#')),
+                     len(lines))
+        lines.insert(first, row)
+    with open(PRICES, 'w', encoding='utf-8') as fh:
+        fh.write('\n'.join(lines) + '\n')
+    print('[metrics] %s %s: in $%.2f, out $%.2f, cache read %gx in (verified %s).'
+          % ('updated' if old is not None else 'added', model, pin, pout, crm, row.split('\t')[-1]))
+    return 0
+
+
 # --------------------------------------------------------------------------- archive
 def cmd_archive(argv):
     if not argv or not re.match(r'^\d{4}-\d{2}-\d{2}$', argv[0]):
@@ -1734,13 +1865,13 @@ def main():
     cmd, argv = sys.argv[1], sys.argv[2:]
     table = {'emit': cmd_emit, 'session': cmd_session, 'sync': cmd_sync, 'report': cmd_report,
              'render': cmd_render, 'backfill': cmd_backfill, 'selftest': cmd_selftest,
-             'archive': cmd_archive}
+             'archive': cmd_archive, 'prices': cmd_prices, 'price': cmd_price}
     fn = table.get(cmd)
     if not fn:
         die('unknown subcommand %r' % cmd)
     # Recording must never break its caller: a dispatch run or a session hook that cannot write
     # the ledger still succeeds. The reading commands are allowed to fail loudly.
-    if cmd in ('emit', 'session'):
+    if cmd in ('emit', 'session') or (cmd == 'prices' and '--hook' in argv):
         try:
             return fn(argv)
         except Exception as exc:                                   # noqa: BLE001

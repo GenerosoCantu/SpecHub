@@ -93,7 +93,14 @@ scripts/changelog.sh add "<Feature> (#n) implemented and closed across <services
 scripts/metrics.sh render
 ```
 
-- One command, zero reads: it first syncs every hub session transcript into the ledger (this session included, forked subagents and all), then rebuilds the board from that ledger together with the events `dispatch.sh` has been writing all along. Nothing to review, nothing to paste into a spec. If it warns about a missing price row or a stale one, say so in the final report — do not edit `metrics/prices.tsv` from inside this step.
+- One command, zero reads: it first syncs every hub session transcript into the ledger (this session included, forked subagents and all), then rebuilds the board from that ledger together with the events `dispatch.sh` has been writing all along. Nothing to review, nothing to paste into a spec.
+- Then price any new model, so no session's value is lost to `n/a`:
+
+```bash
+scripts/metrics.sh prices          # exit 1 + list when a model the ledger used has no price row
+```
+
+  For each model it lists, take the list price (USD per million tokens: input, output, cache-read multiplier of input) from the `claude-api` skill's model table or the Anthropic pricing page, add it with `scripts/metrics.sh price <model> <in> <out> <cread_mult>` (never edit `metrics/prices.tsv` by hand), and run `render` again — every past session of that model is re-priced. **Never estimate**: a price you cannot verify stays missing and goes in the final report. A stale-row warning is reported, not fixed here.
 
 ## 7. Archive the feature file
 
@@ -120,6 +127,6 @@ scripts/metrics.sh render
 
 ## 11. Finish
 
-Report (under 40 lines — it is all the main session receives): prompts flipped to Verified, branches merged (merge commits per repo, pushed to origin or **PUSH FAILED**), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), metrics board regenerated (plus any price-row warning it printed), archived files, spec locks released (and what `lock.sh check` reported), and any convention syncs performed. Flag anything the specs still don't capture.
+Report (under 40 lines — it is all the main session receives): prompts flipped to Verified, branches merged (merge commits per repo, pushed to origin or **PUSH FAILED**), workspace reset (services back on main checkouts, worktree roots gone or which remain and why), drift-check result (deviations found), files reconciled, STATUS row flipped, changelog entry (with commit refs), metrics board regenerated (price rows added, with their source, and any price that could not be verified or is stale), archived files, spec locks released (and what `lock.sh check` reported), and any convention syncs performed. Flag anything the specs still don't capture.
 
 The loop is closed. The next feature's design (Step 1) starts in a **new session** on an Advanced-tier model.
