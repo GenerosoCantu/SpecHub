@@ -1109,6 +1109,20 @@ class Stats:
                 'sessions': len(hub),
                 'verify_attempts': len([e for e in self.verifies if e.get('feature') == feature])}
 
+    def feature_dates(self, feature):
+        """(closed, days): the date of the feature's last merge, and the lead time in days from
+        its first ledger event to that merge. Derived at render time — the ledger already carries
+        every timestamp, so nothing extra is stored. None for a feature not merged yet."""
+        ts = sorted(e['ts'] for e in self.evs if e.get('feature') == feature and e.get('ts'))
+        mg = sorted(e['ts'] for e in self.merges if e.get('feature') == feature and e.get('ts'))
+        if not mg:
+            return None, None
+        # Hub-session timestamps carry milliseconds; dispatch events do not.
+        f = '%Y-%m-%dT%H:%M:%S'
+        t0 = datetime.datetime.strptime(ts[0][:19], f)
+        t1 = datetime.datetime.strptime(mg[-1][:19], f)
+        return mg[-1][:10], max(0.0, (t1 - t0).total_seconds() / 86400)
+
     def totals(self):
         h = sum(e['cost_usd'] for e in self.hub if e.get('cost_usd') is not None)
         d = sum(e['cost_usd'] for e in self.runs if e.get('cost_usd') is not None)
@@ -1580,20 +1594,27 @@ def cmd_render(argv):
         A('')
         A('Value never appears without the friction counts beside it: a feature that needed resumes '
           'used more than its headline figure, and the headline alone never says so. Latest feature '
-          'first; the 15 most recent are listed, the median covers all of them.')
+          'first; the 15 most recent are listed, the median covers all of them. **Closed** is the '
+          'date of the last merge; **Days** is the lead time from the feature\'s first ledger event '
+          'to that merge (dispatch-only features start their clock at the first run, so theirs is '
+          'short).')
         A('')
-        A('| # | Feature | Hub | Dispatch | Total | Runs | Resumes | Verify attempts |')
-        A('|---|---------|---:|---:|---:|---:|---:|---:|')
+        A('| # | Feature | Closed | Days | Hub | Dispatch | Total | Runs | Resumes | Verify attempts |')
+        A('|---|---------|---|---:|---:|---:|---:|---:|---:|---:|')
         any_partial = False
         for fe, c in rows[:15]:
             n = num_for(fe, numbers)
             shown = money(c['total']) + ('+' if c.get('partial') else '')
             any_partial = any_partial or bool(c.get('partial'))
-            A('| %s | %s | %s | %s | **%s** | %d | %d | %d |'
-              % (n if n else '—', fe, money(c['hub']), money(c['dispatch']), shown,
+            closed, days = st.feature_dates(fe)
+            A('| %s | %s | %s | %s | %s | %s | **%s** | %d | %d | %d |'
+              % (n if n else '—', fe, closed or 'open', '—' if days is None else '%.1f' % days,
+                 money(c['hub']), money(c['dispatch']), shown,
                  c['runs'], c['resumes'], c['verify_attempts']))
-        A('| | **median** | %s | %s | **%s** | | | |'
-          % (money(median([c['hub'] for _, c in rows if c['hub'] is not None])),
+        lead = [d for d in (st.feature_dates(fe)[1] for fe, _ in rows) if d is not None]
+        A('| | **median** | | %s | %s | %s | **%s** | | | |'
+          % ('%.1f' % median(lead) if lead else '—',
+             money(median([c['hub'] for _, c in rows if c['hub'] is not None])),
              money(median([c['dispatch'] for _, c in rows if c['dispatch'] is not None])),
              money(median([c['total'] for _, c in rows]))))
         A('')
