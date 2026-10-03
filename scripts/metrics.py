@@ -186,14 +186,19 @@ SERVICES = services()
 
 
 def feature_of(name):
-    """PROMPT-{service}-{feature}[.md] / FEATURE-{feature}.md -> the feature slug.
+    """PROMPT-{service}-{feature}[.md] / FEATURE-{feature}.md / BUG-{feature}.md -> the slug.
 
     Strips the LONGEST matching service name, mirroring dispatch.sh prompt_service() so the two
     always agree on where the service ends and the feature begins.
     """
     b = re.sub(r'\.md$', '', os.path.basename(name or ''))
-    if b.startswith('FEATURE-'):
-        return b[len('FEATURE-'):] or None
+    # templates/{FEATURE,BUG,PROMPT}-TEMPLATE.md are read by every design and cascade session;
+    # treating them as a feature billed bug cascades to a phantom "TEMPLATE" feature.
+    if b.endswith('-TEMPLATE'):
+        return None
+    for pre in ('FEATURE-', 'BUG-'):
+        if b.startswith(pre):
+            return b[len(pre):] or None
     b = re.sub(r'^PROMPT-', '', b)
     best = ''
     for s in SERVICES:
@@ -218,7 +223,8 @@ def known_features():
     out = set()
     for pat in ('Prompts/PROMPT-*.md', 'Prompts/Implemented/PROMPT-*.md',
                 'Features/FEATURE-*.md', 'Features/Implemented/FEATURE-*.md',
-                'Features/Staled/FEATURE-*.md'):
+                'Features/Staled/FEATURE-*.md', 'Features/BUG-*.md',
+                'Features/Implemented/BUG-*.md', 'Features/Staled/BUG-*.md'):
         for f in glob.glob(os.path.join(HUB, pat)):
             fe = feature_of(f)
             if fe:
@@ -228,8 +234,8 @@ def known_features():
 
 KNOWN_FEATURES = known_features()
 
-# Matches Prompts/PROMPT-x.md, PROMPT-x, FEATURE-x.md — with or without directory or extension.
-FEATURE_REF = re.compile(r'(?:FEATURE|PROMPT)-([A-Za-z0-9\-]+?)(?:\.md)?(?=[\s"\',;:)\]]|$)')
+# Matches Prompts/PROMPT-x.md, PROMPT-x, FEATURE-x.md, BUG-x.md — with or without directory or extension.
+FEATURE_REF = re.compile(r'(?<![A-Za-z0-9_])(?:FEATURE|BUG|PROMPT)-([A-Za-z0-9\-]+?)(?:\.md)?(?=[\s"\',;:)\]]|$)')
 
 
 def hdr(path, key):
@@ -511,6 +517,12 @@ def parse_transcript(path):
     msgs = side = 0
     first = last = None
     skills, touched, touched_any = set(), collections.Counter(), collections.Counter()
+    # A skill called through the Skill tool counts only if the call ran: one the user rejected
+    # never executed, and must not relabel a design session that merely tried to chain a step.
+    skill_calls, rejected = {}, set()
+    # Bare slugs in tool inputs (a glob like PROMPT-*-x.md, `dispatch.sh run --all` output paths)
+    # — the last-resort feature for a skill-bearing session that names no file outright.
+    mentioned = collections.Counter()
     sid = None
     wrote_feature_file = False
     seen = set()
@@ -553,17 +565,18 @@ def parse_transcript(path):
                     continue
                 name, inp = b.get('name'), b.get('input') or {}
                 if name == 'Skill' and inp.get('skill'):
-                    skills.add(inp['skill'])
                     # A skill is invoked with the feature as its argument — the single most
                     # direct statement of what the session is for. Match the args against the
                     # hub's own feature vocabulary rather than re-deriving a slug from prose.
                     args = str(inp.get('args', ''))
-                    for fe in KNOWN_FEATURES:
-                        if fe in args:
-                            touched[fe] += 3
-                            touched_any[fe] += 3
-                            break
+                    skill_calls[b.get('id')] = (inp['skill'],
+                                                next((fe for fe in KNOWN_FEATURES if fe in args), None))
                 blob = ' '.join(str(v) for v in inp.values() if isinstance(v, str))
+                rest = blob   # longest-first, consumed, so 'x-block' is not also counted as 'x'
+                for fe in KNOWN_FEATURES:
+                    if fe in rest:
+                        mentioned[fe] += 1
+                        rest = rest.replace(fe, '')
                 # Only a WRITE claims a feature. Reading a prompt file (grep, cat, sed -n) is what
                 # any session inspecting the hub does — including this metrics work — so counting
                 # reads would bill unrelated sessions to whichever feature they happened to look at.
@@ -582,12 +595,16 @@ def parse_transcript(path):
                     touched_any[fe] += 1
                     if writes:
                         touched[fe] += 1
-                        if m.group(0).startswith('FEATURE-') and fe in KNOWN_FEATURES:
+                        if m.group(0).startswith(('FEATURE-', 'BUG-')) and fe in KNOWN_FEATURES:
                             wrote_feature_file = True
 
         # Slash-command markers live in plain user text. tool_result blocks are also type "user",
         # so restrict to string/text content or a session that merely echoed the marker self-tags.
         if typ == 'user':
+            for b in content if isinstance(content, list) else []:
+                if (isinstance(b, dict) and b.get('type') == 'tool_result' and b.get('is_error')
+                        and b.get('tool_use_id') in skill_calls):
+                    rejected.add(b['tool_use_id'])
             txt = content if isinstance(content, str) else ' '.join(
                 b.get('text', '') for b in (content if isinstance(content, list) else [])
                 if isinstance(b, dict) and b.get('type') == 'text')
@@ -610,13 +627,20 @@ def parse_transcript(path):
                         touched_any[fe] += 3
                         break
 
+    for uid, (name, fe) in skill_calls.items():
+        if uid in rejected:
+            continue
+        skills.add(name)
+        if fe:
+            touched[fe] += 3
+            touched_any[fe] += 3
     skill = sorted(skills & set(STEP_OF))[0] if (skills & set(STEP_OF)) else None
     step = STEP_OF.get(skill)
     # A skill-bearing session is a workflow step for exactly one feature by construction, so a
     # mere reference is enough to own it — a dispatch or close-out session drives scripts and may
     # never write the prompt file itself. Without a skill, require a WRITE: any session poking
     # around the hub reads these files, and reads must not bill it to whatever it looked at.
-    pool = (touched_any or touched) if skill else touched
+    pool = (touched_any or touched or mentioned) if skill else touched
     feature = pool.most_common(1)[0][0] if pool else None
     # Step 1 design is the one step with no skill, so it can only be recognised by what it does:
     # write the feature file itself. Merely mentioning a feature is not enough — this workspace's
