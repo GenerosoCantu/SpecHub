@@ -332,7 +332,14 @@ EOF
     printf '# Base branch feature branches are cut from and merged back into.\nBASE_BRANCH="%s"\n\n' "$base"
     printf '# Push the base branch to origin after every Step 4 merge (1 = yes). The merge fast-forwards the local base\n# to origin first and refuses to run if it has diverged; `dispatch.sh merge --no-push` keeps one merge local.\nMERGE_PUSH="1"\n\n'
     printf '# Headless coding agent that runs the prompts: claude | codex | copilot (AGENT_BIN overrides the PATH lookup).\nAGENT_CLI="%s"\n#AGENT_BIN=""\n\n' "$agent"
-    printf '# Model per tier for that CLI. Prompts name a tier (Light | Standard | Advanced); leave commented for the defaults.\n#MODEL_LIGHT=""\n#MODEL_STANDARD=""\n#MODEL_ADVANCED=""\n\n'
+    # Claude tiers are pinned to the exact ids in spechub.conf.example (scripts/models.sh keeps them current);
+    # other CLIs keep their alias defaults, since their model ids are not Claude's.
+    local pins=""; [ "$agent" = claude ] && [ -f "$HUB_DIR/spechub.conf.example" ] && pins="$(grep -E '^MODEL_(LIGHT|STANDARD|ADVANCED)="claude-' "$HUB_DIR/spechub.conf.example" || true)"
+    if [ -n "$pins" ]; then
+      printf '# Model per tier for that CLI. Prompts name a tier (Light | Standard | Advanced). Pinned to exact ids so a\n# model release never moves a tier silently: `scripts/models.sh check` reports newer ones, `upgrade --apply` moves them.\n%s\n\n' "$pins"
+    else
+      printf '# Model per tier for that CLI. Prompts name a tier (Light | Standard | Advanced); leave commented for the defaults.\n#MODEL_LIGHT=""\n#MODEL_STANDARD=""\n#MODEL_ADVANCED=""\n\n'
+    fi
     printf '# Parent directory of the service repos; relative `dir` entries resolve against it. Kept relative to\n# this hub folder so every clone works unchanged; a checkout laid out differently sets SPECHUB_REPOS_ROOT\n# in the environment or REPOS_ROOT in its gitignored spechub.local.conf. Never commit an absolute path here.\nREPOS_ROOT="${SPECHUB_REPOS_ROOT:-%s}"\n\n' "$(rel_from_hub "$root")"
     printf '# Gitignored files copied from each main checkout into its worktrees (glob patterns).\nWORKTREE_COPY_FILES=".env .env.* application-local.properties"\n\n'
     printf '# Dependency directories linked from the main checkout into worktrees (DISPATCH_DEPS=install reinstalls instead).\nWORKTREE_LINK_DIRS="node_modules .venv vendor"\n\n'

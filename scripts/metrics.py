@@ -4,8 +4,9 @@
 One append-only JSONL ledger (metrics/ledger.jsonl) is the only state. Every view — the terminal
 report, METRICS.md — is a pure function of it, so deleting a view and regenerating it is a no-op.
 
-Cost provenance is tracked, never guessed: dispatch runs carry the cost the CLI reported; hub
-sessions carry a cost derived from token counts and metrics/prices.tsv. `selftest` proves the
+Cost provenance is tracked, never guessed: dispatch runs store the cost the CLI reported; hub
+sessions store a cost derived from token counts and metrics/prices.tsv. The views price both from
+tokens at today's table (at_todays_prices), so every dollar on the board is in one unit. `selftest` proves the
 derivation reproduces reported costs to the cent. A model with no price row yields None, not a
 guess.
 """
@@ -73,6 +74,16 @@ def show_model(m):
     return ('%s*' % m) if is_alias(m) else norm_model(m)
 
 
+def run_model(e):
+    """The model a dispatch run is counted under. A run logged with a tier alias ('sonnet') before
+    dispatch.sh recorded ids usually still carries its per-model usage, whose keys are the exact
+    ids: take the costliest one, the same rule backfill uses. Only a run with no usage keeps the alias."""
+    m = e.get('model')
+    if is_alias(m) and e.get('models'):
+        return max(e['models'], key=lambda k: cost_of(k, e['models'][k]) or 0)
+    return m
+
+
 def cost_of(model, tk):
     """Exact derivation; None when the model has no price row (never an estimate).
 
@@ -95,8 +106,8 @@ def cost_of(model, tk):
 
 
 # Lineup-wide ratios, used when a model has no price row. Verified across every row of
-# prices.tsv: output is 5.00x input for every current model, cache read 0.1x (0.025x on
-# Claude Fable 5.1). These RATIOS are far more stable than the absolute prices.
+# prices.tsv: output is 5.00x input for every current model, cache read 0.1x (0.05x on
+# Claude Opus 5.5 / Sonnet 5.5, 0.025x on Claude Fable 5.1 / Mythos 5.1). These RATIOS are far more stable than the absolute prices.
 DEFAULT_OUT_RATIO = 5.0
 DEFAULT_CREAD_MULT = 0.1
 
@@ -1043,10 +1054,28 @@ def kt(n):
 
 
 
+def at_todays_prices(e):
+    """The view of a dispatch run that every dollar on the board uses: its stored tokens priced at
+    today's metrics/prices.tsv, the same basis as hub sessions, so one unit measures every row. The
+    CLI's reported figure moves to 'cost_reported' (selftest and the reprice note compare the two).
+    A copy, never the stored row: the ledger keeps what the CLI reported. A run with no per-model
+    usage, or one using an unpriced model, keeps its reported cost and says so in 'cost_view'."""
+    if e.get('event') not in ('dispatch_run', 'dispatch_resume') or e.get('cost_basis') != 'reported':
+        return e
+    rp = sum_models(e.get('models')) if e.get('models') else None
+    v = dict(e)
+    if rp is None:
+        v['cost_view'] = 'reported'
+        return v
+    v['cost_reported'], v['cost_usd'], v['cost_view'] = e.get('cost_usd'), rp, 'derived'
+    return v
+
+
 class Stats:
     """Everything both views need, computed once from the ledger."""
 
     def __init__(self, evs):
+        evs = [at_todays_prices(e) for e in evs]
         self.evs = evs
         self.runs = [e for e in evs if e.get('event') in ('dispatch_run', 'dispatch_resume')]
         self.first_runs = [e for e in evs if e.get('event') == 'dispatch_run']
@@ -1140,7 +1169,7 @@ class Stats:
                 r['models'][m] += 1
         for e in self.first_runs + self.resumes:
             r = out[3]
-            r['models'][e.get('model') or 'unknown'] += 1
+            r['models'][run_model(e) or 'unknown'] += 1
             r['runs'] = r.get('runs', 0) + 1
         return out
 
@@ -1225,18 +1254,19 @@ class Stats:
         return out
 
     def repriced(self):
-        """(billed, repriced) — what the CLI reported vs what the same tokens cost at today's
-        table. A gap means prices moved since the run, not that anything is wrong."""
+        """(reported, repriced, kept) — what the CLI reported for the runs the board re-prices, what
+        the same tokens cost at today's table, and how many runs kept their reported cost because
+        they carry no per-model usage. A gap means prices moved since the run, or the CLI's
+        built-in prices differ from the table (selftest names which)."""
         billed = repriced = 0.0
+        kept = 0
         for e in self.runs:
-            if e.get('cost_usd') is None or not e.get('models'):
-                continue
-            rp = sum_models(e['models'])
-            if rp is None:
-                continue
-            billed += e['cost_usd']
-            repriced += rp
-        return billed, repriced
+            if e.get('cost_view') == 'reported':
+                kept += 1
+            elif e.get('cost_view') == 'derived' and e.get('cost_reported') is not None:
+                billed += e['cost_reported']
+                repriced += e['cost_usd']
+        return billed, repriced, kept
 
     def failure_patterns(self):
         c = collections.Counter()
@@ -1305,12 +1335,14 @@ def cmd_report(argv):
     print('\nAPI-LIST VALUE')
     tot = h + d
     print('  hub sessions      %10s   %4.1f%%   (derived)' % (money(h), pct(h, tot)))
-    print('  dispatched runs   %10s   %4.1f%%   (reported)' % (money(d), pct(d, tot)))
+    print('  dispatched runs   %10s   %4.1f%%   (derived)' % (money(d), pct(d, tot)))
     print('  total             %10s' % money(tot))
-    billed, rp = st.repriced()
+    billed, rp, kept = st.repriced()
     if billed and abs(billed - rp) > 0.005:
-        print('  reprice check     %10s reported vs %s at today\'s table — prices moved %+.1f%%'
+        print('  reprice check     %10s reported by the CLI vs %s at today\'s table (%+.1f%%)'
               % (money(billed), money(rp), pct(rp - billed, billed)))
+    if kept:
+        print('  %d run(s) carry no per-model usage and keep their reported cost' % kept)
     cr = 0.0
     for e in st.hub + st.runs:
         for m, tk in (e.get('models') or {}).items():
@@ -1565,15 +1597,22 @@ def cmd_render(argv):
     A('| Half of the usage | Value | Share | Basis |')
     A('|---|---:|---:|---|')
     A('| Hub sessions (Steps 0–4, in this workspace) | %s | %.1f%% | derived |' % (money(h), pct(h, tot)))
-    A('| Dispatched implementation runs | %s | %.1f%% | reported |' % (money(d), pct(d, tot)))
+    A('| Dispatched implementation runs | %s | %.1f%% | derived |' % (money(d), pct(d, tot)))
     A('| **Total** | **%s** | | |' % money(tot))
     A('')
-    billed, rp = st.repriced()
+    billed, rp, kept = st.repriced()
+    A('Every dollar on this board is the stored token count priced at today\'s `metrics/prices.tsv` '
+      '— hub sessions and dispatch runs alike — so a change over time is a change in usage, never a '
+      'change in Anthropic\'s prices. List prices are a unit for comparing models, not an invoice.')
+    A('')
     if billed and abs(billed - rp) > 0.005:
-        A('> **Prices have moved since these runs.** The CLI valued the dispatch runs at %s; the same '
-          'tokens at today\'s `metrics/prices.tsv` come to %s (%+.1f%%). Reported figures are kept as '
-          'reported — the token counts are what make the re-pricing possible.'
+        A('> The CLI reported %s for the re-priced dispatch runs; the same tokens at today\'s table come '
+          'to %s (%+.1f%%). Either prices moved since the runs or the CLI\'s built-in prices differ from '
+          'the table — `scripts/metrics.sh selftest` lists the runs that disagree.'
           % (money(billed), money(rp), pct(rp - billed, billed)))
+        A('')
+    if kept:
+        A('> %d dispatch run(s) carry no per-model usage, so they keep the cost the CLI reported.' % kept)
         A('')
     cr = 0.0
     for e in st.hub + st.runs:
@@ -1648,7 +1687,7 @@ def cmd_render(argv):
         A('**ITE** (input-token equivalents) `= in + 5x out + 0.1x cache_read + 1.25x write_5m + '
           '2x write_1h` — each token class weighted by what it actually consumes relative to one '
           'input token. Those weights are uniform across the whole Claude lineup (output is exactly '
-          '5.00x input for every model; cache read 0.1x, except 0.025x on Claude Fable 5.1), so ITE '
+          '5.00x input for every model; cache read 0.1x, except 0.05x on Opus 5.5 / Sonnet 5.5 and 0.025x on Fable 5.1 / Mythos 5.1), so ITE '
           'is proportional to API-list value within a model — `dollars = ITE x input_price / 1e6` — while '
           'depending only on the *ratios*, never the price level. `selftest` asserts that identity.')
         A('')
@@ -1756,8 +1795,9 @@ def cmd_render(argv):
         A('')
 
     if any(is_alias(m) for _s in bs for m in bs[_s]['models']):
-        A('`*` marks a tier alias (`sonnet`) recorded before `dispatch.sh` logged model ids. The exact '
-          'model behind it is not recoverable, so it is shown as written rather than guessed into one.')
+        A('`*` marks a tier alias (`sonnet`) recorded before `dispatch.sh` logged model ids, on a run '
+          'that also kept no per-model usage. The exact model behind it is not recoverable, so it is '
+          'shown as written rather than guessed into one.')
         A('')
 
     fails = [e for e in st.verifies if e.get('result') == 'fail']

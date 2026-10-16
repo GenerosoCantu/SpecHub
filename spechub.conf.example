@@ -21,9 +21,12 @@ AGENT_CLI="claude"
 # Model per tier for that CLI. Prompts name a tier — Light (simple/backend/config work),
 # Standard (moderate logic, light UI), Advanced (complex UI or reasoning) — and the dispatcher
 # maps it here. Leave commented for the built-in defaults of the chosen CLI.
-#MODEL_LIGHT=""
-#MODEL_STANDARD=""
-#MODEL_ADVANCED=""
+# Pinned to exact Claude ids so a new model release never moves a tier silently; `scripts/models.sh check`
+# reports newer releases and `upgrade --apply` moves the pins (and the `model:` line of .claude/agents/*.md).
+# Clear them if AGENT_CLI is codex or copilot (those CLIs use other ids); unpinned tiers run the CLI alias.
+MODEL_LIGHT="claude-haiku-5-5"
+MODEL_STANDARD="claude-sonnet-5-5"
+MODEL_ADVANCED="claude-opus-5-5"
 
 # Parent directory of the service repos. Relative `dir` entries below resolve against it. A relative
 # REPOS_ROOT resolves against this hub folder (e.g. ".." when the hub sits next to the repos), so a clone

@@ -19,8 +19,9 @@
 # The ledger is metrics/ledger.jsonl — append-only, committed, machine-read. METRICS.md is generated
 # from it. Neither is ever opened in a model session: both are written and read by this script.
 #
-# Dispatch-run costs are REPORTED by the agent CLI. Hub-session costs are DERIVED from token counts
-# via metrics/prices.tsv; `selftest` proves that derivation reproduces reported costs exactly.
+# Every dollar the views show is DERIVED: stored token counts priced at today's metrics/prices.tsv,
+# for hub sessions and dispatch runs alike. The ledger also keeps the cost the agent CLI REPORTED
+# for each dispatch run; `selftest` proves the derivation reproduces it.
 # A hub session is its Claude Code transcript plus the subagent transcripts forked from it (the
 # hub-ops fork of Steps 3/4, Explore agents, spec-writers). Recording is a reconciliation, not an
 # event: the hooks, `sync`, `report` and `render` each record whatever transcript on disk the

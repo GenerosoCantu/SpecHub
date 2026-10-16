@@ -2,13 +2,13 @@
 
 A one-page view of `WORKFLOW.md` for people: which step, which session, which model. `WORKFLOW.md` has the full rules, and it wins if the two ever disagree.
 
-**Model tiers → Claude Code and GitHub Copilot models.** The defaults in `scripts/dispatch.sh` apply; you can override them in `spechub.conf` (`MODEL_LIGHT` / `MODEL_STANDARD` / `MODEL_ADVANCED`). Switch models in the session with `/model <alias>`.
+**Model tiers → Claude Code and GitHub Copilot models.** `spechub.conf` pins each tier to an exact model id (`MODEL_LIGHT` / `MODEL_STANDARD` / `MODEL_ADVANCED`), which overrides the alias defaults in `scripts/dispatch.sh`. Switch models in the session with `/model <alias>`.
 
 | Tier | Claude Code alias | Claude Code resolves to | GitHub Copilot model |
 |---|---|---|---|
-| Light | `haiku` | Claude Haiku 4.5 | `gpt-5-mini` |
-| Standard | `sonnet` | Claude Sonnet 5 | `gpt-5` |
-| Advanced | `opus` | Claude Opus 5 | `claude-opus-4.1` |
+| Light | `haiku` | Claude Haiku 5.5 | `gpt-5-mini` |
+| Standard | `sonnet` | Claude Sonnet 5.5 | `gpt-5` |
+| Advanced | `opus` | Claude Opus 5.5 | `claude-opus-4.1` |
 
 ---
 
@@ -19,7 +19,7 @@ A one-page view of `WORKFLOW.md` for people: which step, which session, which mo
 | 0 | **Bootstrap** the hub from the repos | `scripts/bootstrap.sh init`, then the `bootstrap-specs` skill | **New.** Forks one `spec-writer` per service. End the session when the files are on disk. Clone the hub next to the service repos, or set `REPOS_ROOT` in the gitignored `spechub.local.conf`. | Standard (`sonnet`) |
 | 1 | **Design** the feature → `Features/FEATURE-{name}.md` (a bug in closed work → `Features/BUG-{name}.md`, see [Bugs](#bugs)) | Ask in plain language (no skill). The session first posts `scripts/lock.sh intend {name} <services>` — a notice, blocks nobody, warns you if someone is designing or holding the same area — then designs. Use `Explore` subagents to read the code. | **New.** It must not carry context from another feature. End the session when the file is written. | Advanced (`opus`) |
 | 2 | **Cascade & Prompt**: spec edits + `STATUS.md` row, then `Prompts/PROMPT-*.md` | `cascade-and-prompt` skill | **New.** One pass does both halves. End the session when the prompts are on disk. | Standard (`sonnet`) |
-| 3 | **Dispatch**: run prompts in worktrees, in parallel | `dispatch-prompts` skill (`scripts/dispatch.sh run --all`, `wait`) | **New.** Forks into `hub-ops`. | Standard (`sonnet`; `hub-ops` is set to `sonnet`) |
+| 3 | **Dispatch**: run prompts in worktrees, in parallel | `dispatch-prompts` skill (`scripts/dispatch.sh run --all`, `wait`) | **New.** Forks into `hub-ops`. | Standard (`sonnet`; `hub-ops` is pinned to `claude-sonnet-5-5`) |
 | 3′ | *Implementation* (headless, one per prompt) | Started by the dispatcher | Its own headless session per prompt, each in a worktree | The tier in the prompt header (`Recommended model:`) |
 | 3″ | **Verify** each prompt, in implementation order | Test by hand against the services running from the worktrees, then `scripts/dispatch.sh verify <prompt>` (or `--fail "<reason>"`) | Human, no agent | — |
 | 4 | **Close the loop**: merge, reconcile specs, `STATUS.md`, changelog, metrics, archive | `close-loop` skill | **New.** Forks into `hub-ops`. | Standard (`sonnet`) |

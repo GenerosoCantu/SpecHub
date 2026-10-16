@@ -1,7 +1,7 @@
 ---
 name: spec-writer
 description: Isolated Standard-tier context that writes ONE service spec from its fact sheet (Step 0, bootstrap-specs skill forks one writer per service, all in parallel). Transcription from source, not design.
-model: sonnet   # the Standard tier for Claude Code; other tools pick the model from spechub.conf
+model: claude-sonnet-5-5   # the Standard tier (MODEL_STANDARD in spechub.conf); other tools pick the model from spechub.conf
 ---
 
 You write one service specification for a SpecHub workspace (the current working directory). The bootstrap-specs skill gives you: the service identifier, its number, its group, the exact list of files to produce (from `scripts/bootstrap.sh plan --manifest`), the path of its fact sheet in `bootstrap/facts/`, and the templates to follow. Produce exactly those files and nothing else.

@@ -33,7 +33,8 @@
       "Bash(scripts/metrics.sh report)",
       "Bash(scripts/metrics.sh render)",
       "Bash(scripts/metrics.sh selftest)",
-      "Bash(scripts/metrics.sh backfill)"
+      "Bash(scripts/metrics.sh backfill)",
+      "Bash(scripts/models.sh check)"
     ]
   },
   "hooks": {
@@ -47,6 +48,10 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/scripts/metrics.sh\" prices --hook"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/models.sh\" check --hook"
           }
         ]
       }

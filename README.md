@@ -120,7 +120,7 @@ bootstrap/facts/                    generated fact sheets, one per service
 archive/                            rolled changelog entries and old material — not a source of truth
 skills/                             bootstrap-specs, cascade-and-prompt, dispatch-prompts, close-loop
                                     (symlinked from .claude/skills, .github/skills, .codex/skills)
-scripts/                            bootstrap.sh, stack.sh, dispatch.sh, changelog.sh, status.sh, lock.sh, instance.sh, metrics.sh
+scripts/                            bootstrap.sh, stack.sh, dispatch.sh, changelog.sh, status.sh, lock.sh, instance.sh, metrics.sh, models.sh
 .claude/                            settings.json, agents/{spec-writer,hub-ops}.md
 .github/agents/                     Copilot wrappers for the same subagents (*.agent.md)
 ```
