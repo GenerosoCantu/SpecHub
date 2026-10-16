@@ -85,6 +85,9 @@ Your first action, before reading a spec: post the design intent — `scripts/lo
 
 Then create or update `Features/FEATURE-{name}.md` (`templates/FEATURE-TEMPLATE.md`) before proposing implementation prompts. Cross-service features must declare an implementation order (see WORKFLOW.md Step 1).
 
+### Designing a program — several features that only make sense together (Step 1, program variant)
+No intent is posted for a program (the derived features post theirs). Read `WORKFLOW.md` → Programs, `CONVENTIONS.md`, `STATUS.md`, and the index + `00-core.md` + relevant module file(s) of each spec the program touches. Create or polish `Features/PROGRAM-{name}.md` (`templates/PROGRAM-TEMPLATE.md`). Derive feature files only once its Open decisions are empty; each derived feature is designed in its own Step 1 session and carries `**Program:** PROGRAM-{name}`.
+
 ### Fixing a bug in merged, closed work (Step 1, bug variant)
 Post the intent first (`scripts/lock.sh intend <bug-name> <service>...`, as for a feature), read `WORKFLOW.md` → Bugs, then the relevant service spec (index + module file(s)). Create `Features/BUG-{name}.md` (`templates/BUG-TEMPLATE.md`), classed A (code diverges from spec — no spec edit) or B (spec wrong or silent — cascaded like an enhancement). A defect in a prompt that is still `Applied` is not a bug file: resume that prompt (`scripts/dispatch.sh resume`).
 
@@ -120,13 +123,13 @@ Read:
 - `NN-{service}.md`: one spec per service (index + `NN-{service}/` directory when split) — see the Services table above
 - `bootstrap/facts/`: mechanical fact sheets per service (`scripts/bootstrap.sh facts`) — the input of Step 0; excluded from searches. §4 is the module list (and §4b the shared layers a frontend does not split on), §7a the canonical env-var list, §12 the writer's complete read set
 - `bootstrap/OBSERVATIONS.md`: append-only log of template rules that did not decide a case — Step 0 writes here instead of editing a template, so one run's contract stays comparable to the next
-- `Features/`: pending feature (`FEATURE-*.md`) and bug (`BUG-*.md`) design documents only
+- `Features/`: pending feature (`FEATURE-*.md`), bug (`BUG-*.md`) and program (`PROGRAM-*.md`) design documents only — a program is the shared UX/architecture design of several features (WORKFLOW.md → Programs); it is never cascaded and never generates a prompt
 - `Features/Implemented/`: archived design docs for completed features (frozen historical records)
 - `Features/Staled/`: parked feature designs — not active, not implemented (see WORKFLOW.md "Staled Features")
 - `Prompts/`: active implementation prompts (each carries a repo/branch/prereq/status header)
 - `Prompts/Implemented/`: prompts for completed work
 - `repo-instructions/`: canonical copies of each service repo's instruction file (`AGENTS.md`) — seeded in Step 0, synced in Step 4 when conventions change
-- `templates/`: fill-in templates (architecture overview, conventions, status board, spec locks board, service spec, spec index, module file, feature file, bug file, prompt)
+- `templates/`: fill-in templates (architecture overview, conventions, status board, spec locks board, service spec, spec index, module file, feature file, bug file, program file, prompt)
 - `skills/`: workspace skills — `bootstrap-specs` (Step 0), `cascade-and-prompt` (Step 2), `dispatch-prompts` (Step 3), `close-loop` (Step 4); symlinked from `.claude/`, `.github/` and `.codex/`
 - `.claude/agents/`, `.github/agents/`: `spec-writer` (Step 0 per-service writer) and `hub-ops` (the subagent Steps 3 and 4 fork into)
 - `scripts/bootstrap.sh`: Step 0 — discovers repos, detects stacks, writes `spechub.conf`, installs dependencies, writes fact sheets, prints the spec plan (`plan --manifest` prints the exact file list each writer must produce)

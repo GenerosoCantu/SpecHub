@@ -112,7 +112,7 @@ LOCKS.md                            spec locks board — which in-flight feature
 CHANGELOG.md                        implementation history (written only by scripts/changelog.sh)
 00-architecture-overview.md         system map (generated in Step 0)
 NN-{service}.md [+ NN-{service}/]   one spec per service (split into a directory when large)
-Features/                           pending feature designs (Implemented/ and Staled/ archives inside)
+Features/                           pending feature, bug and program designs (Implemented/ and Staled/ archives inside)
 Prompts/                            active implementation prompts (Implemented/ archive inside)
 repo-instructions/                  canonical AGENTS.md for each service repo
 templates/                          fixed shapes of every document

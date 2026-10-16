@@ -3,6 +3,7 @@
 **Status:** Pending (design)
 **Scope:** {affected service identifiers, from spechub.conf}
 **Implementation order:** {service → service → service, or "single service"}
+**Program:** {PROGRAM-{name} when derived from a program file, else omit this line}
 
 > **Size budget:** contracts and decisions only. Target ≤ 8 KB for an enhancement, ≤ 15 KB for a new module. Rationale is at most a few lines per decision — the spec gets the contract, the prompt gets the instructions, this file gets the *why*, briefly. Code reconnaissance should be delegated to an `Explore` subagent that returns a summary; do not paste source files here.
 

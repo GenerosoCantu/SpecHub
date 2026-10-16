@@ -81,6 +81,8 @@ A feature file should cover:
 
 **Bugs use the same step with a smaller file.** A defect in merged, closed work gets `Features/BUG-{name}.md` (`templates/BUG-TEMPLATE.md`) instead of a feature file — see [Bugs](#bugs).
 
+**Programs use the same step with a bigger file, first.** When the work is several features across several services that only make sense together (a new area of the product, not an enhancement), design the shared user experience once in `Features/PROGRAM-{name}.md` (`templates/PROGRAM-TEMPLATE.md`) before any feature file exists — see [Programs](#programs).
+
 > **Why a separate file?** The service spec files describe the *implemented* state of the system. Mixing in-progress design with settled implementation facts pollutes the specs and makes prompt generation unreliable. The `Features/` file is the safe workspace for thinking; once decisions are final, they graduate into the spec. The feature file is archived to `Features/Implemented/` after implementation.
 
 ---
@@ -249,6 +251,7 @@ After the implementation is verified, do all of the following **in a single pass
 | Implementation prompt | `Prompts/PROMPT-{service}-{feature}.md` | `Prompts/PROMPT-api-notifications.md` |
 | Archived implementation prompt | `Prompts/Implemented/PROMPT-{service}-{feature}.md` | — |
 | Bug design file | `Features/BUG-{kebab-name}.md` (archived and staled like a feature file) | `Features/BUG-story-slug-collision.md` |
+| Program design file | `Features/PROGRAM-{kebab-name}.md` (archived and staled like a feature file; never cascaded) | `Features/PROGRAM-theming.md` |
 | Feature branch | `feature/{kebab-name}` (unique per prompt) | `feature/notifications` |
 | Bug-fix branch | `fix/{kebab-name}` (unique per prompt) | `fix/story-slug-collision` |
 | Canonical repo instructions | `repo-instructions/{service}.md` | `repo-instructions/api.md` |
@@ -269,6 +272,18 @@ After the implementation is verified, do all of the following **in a single pass
 | Interactive debugging of a dispatched prompt | Resume the session inside the worktree with your CLI (session ID is in the run report) | Per the prompt header |
 | Closing the loop (step 4) | New session whose request names the verified prompts; `close-loop` skill runs forked in a `hub-ops` subagent, records the verification, merges and pushes | Standard |
 | Answering a question about what was just built | Resume the prompt's session | Per the prompt header |
+
+---
+
+## Programs
+
+A **program** is a body of work too large for one feature file: several features across several services that only make sense together — a new product area rather than an enhancement. Its file, `Features/PROGRAM-{kebab-name}.md` (`templates/PROGRAM-TEMPLATE.md`, ≤ 35 KB), holds what the derived features share: the user journeys, the vocabulary, the page inventory with small ASCII wireframes, the architecture decisions that bind every derived feature, and the feature breakdown with its implementation order.
+
+- **It is a design document, not a workflow artifact.** A program is never cascaded into a spec, never generates a prompt, has no `STATUS.md` row and posts no `scripts/lock.sh intend` — the derived features do all of that, one at a time, each in its own Step 1 session. Only the derived `FEATURE-*.md` files (and `BUG-*.md` files) enter Step 2.
+- **Polish before deriving.** The program's **Open decisions** list must be empty and its status **Polished** before the first feature is derived. Polishing is a conversation with the product owner about the pages and the journeys; it is the cheapest point to change the design.
+- **Deriving a feature.** The feature file carries `**Program:** PROGRAM-{name}` under its header, takes its contracts from the program's architecture decisions, and is **re-validated against the current specs when written** — the program may be months old and the specs have moved. A feature may deviate from the program only by updating the program first (one line in the decision it changes).
+- **Session and tier.** Writing or polishing a program is its own session on the Advanced tier, like feature design. It reads `WORKFLOW.md`, `CONVENTIONS.md`, `STATUS.md` and the index + `00-core.md` + relevant module file(s) of each spec it touches, and delegates any repo reading to an `Explore` subagent.
+- **Lifecycle.** The program's **Features derived** line is updated when each feature file is created and when it closes (Step 4 checks it when the feature file carries a `Program:` line). When the last derived feature closes, the program moves to `Features/Implemented/`. A program is staled or revived exactly like a feature file.
 
 ---
 
