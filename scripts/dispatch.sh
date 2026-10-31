@@ -288,6 +288,15 @@ ensure_base_branch() {  # warn (don't mutate) if local base is behind origin
   fi
 }
 
+# Keep a copied file or linked dir out of the leftover-changes commit even when the repo's .gitignore misses it
+# (a `node_modules/` pattern matches a directory, never the symlink a worktree gets). info/exclude is shared by
+# the repo's worktrees and never committed.
+exclude_in_worktree() {  # exclude_in_worktree <worktree> <path relative to it>
+  local ex; ex="$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/info/exclude" || return 0
+  mkdir -p "${ex%/*}"
+  grep -qxF "/$2" "$ex" 2>/dev/null || printf '/%s\n' "$2" >> "$ex"
+}
+
 setup_worktree() {  # setup_worktree <repo> <branch> <worktree> [<service>]
   local repo="$1" branch="$2" wt="$3"
   if [ -d "$wt" ]; then
@@ -312,6 +321,7 @@ setup_worktree() {  # setup_worktree <repo> <branch> <worktree> [<service>]
     for f in "$repo"/$pat; do
       [ -f "$f" ] || continue
       rel="${f#$repo/}"
+      exclude_in_worktree "$wt" "$rel"
       [ -e "$wt/$rel" ] && continue
       mkdir -p "$(dirname "$wt/$rel")" && cp "$f" "$wt/$rel"
     done
@@ -323,9 +333,9 @@ setup_worktree() {  # setup_worktree <repo> <branch> <worktree> [<service>]
     link)
       local d sub; sub="$(service_subpath "${4:-}")"
       for d in $LINK_DIRS; do
-        if [ -d "$repo/$d" ] && [ ! -e "$wt/$d" ]; then ln -s "$repo/$d" "$wt/$d"; fi
+        if [ -d "$repo/$d" ] && [ ! -e "$wt/$d" ]; then ln -s "$repo/$d" "$wt/$d"; exclude_in_worktree "$wt" "$d"; fi
         # monorepo: the service's own dependency dir (npm/yarn hoist partially, pnpm not at all)
-        if [ -n "$sub" ] && [ -d "$repo/$sub/$d" ] && [ ! -e "$wt/$sub/$d" ]; then ln -s "$repo/$sub/$d" "$wt/$sub/$d"; fi
+        if [ -n "$sub" ] && [ -d "$repo/$sub/$d" ] && [ ! -e "$wt/$sub/$d" ]; then ln -s "$repo/$sub/$d" "$wt/$sub/$d"; exclude_in_worktree "$wt" "$sub/$d"; fi
       done ;;
     install)
       local svc="${4:-}"
