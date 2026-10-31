@@ -284,7 +284,8 @@ cmd_start() {
     started_any=1
   done
   echo
-  echo "${C_DIM}Compiling takes a few seconds. Follow with: $0 logs${C_RESET}"
+  echo "${C_DIM}A port opens once its service has compiled (NestJS, Next.js: 30–60 s; status shows 'starting' meanwhile).${C_RESET}"
+  echo "${C_DIM}Follow with: $0 status · $0 logs${C_RESET}"
 }
 
 cmd_stop()    { echo "${C_BOLD}Stopping${C_RESET}"; local n; for n in $(resolve "$@"); do stop_one "$n"; done; }
@@ -296,11 +297,15 @@ cmd_status() {
   offset_banner
   worktree_banner "$ALL_SERVICES"
   printf "%-24s %-42s %-6s %-9s %-8s %s\n" SERVICE NAME PORT STATE PID PORT-STATE
-  local n pid state port listen
+  local n pid state port listen up
   for n in $ALL_SERVICES; do
     port="$(svc_port "$n")"
-    if pid="$(running_pid "$n")"; then state="${C_GREEN}running${C_RESET}"; else pid="-"; state="${C_DIM}stopped${C_RESET}"; fi
-    if [ -n "$(port_pid "$port")" ]; then listen="${C_GREEN}listening${C_RESET}"; else listen="${C_DIM}closed${C_RESET}"; fi
+    if [ -n "$(port_pid "$port")" ]; then up=1; listen="${C_GREEN}listening${C_RESET}"; else up=0; listen="${C_DIM}closed${C_RESET}"; fi
+    if pid="$(running_pid "$n")"; then
+      # Alive but not listening yet: 'starting' while the pid file is under two minutes old (compiling,
+      # connecting); after that it is 'running' with a closed port — read the log.
+      if [ "$up" = 1 ] || [ -z "$(find "$(pid_file "$n")" -mmin -2 2>/dev/null)" ]; then state="${C_GREEN}running${C_RESET}"; else state="${C_YELLOW}starting${C_RESET}"; fi
+    else pid="-"; state="${C_DIM}stopped${C_RESET}"; fi
     printf "%-24s %-42s %-6s %-20s %-8s %s\n" "$n" "$(svc_label "$n")" "$port" "$state" "$pid" "$listen"
   done
 }
