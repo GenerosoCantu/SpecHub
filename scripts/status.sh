@@ -37,7 +37,7 @@ usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 g() { git -C "$HUB_DIR" "$@"; }
 
 # rows <file> — "number|name" for every numbered table row (both In Flight and Shipped)
-rows() { sed -nE 's/^\|[[:space:]]*([0-9]+)[[:space:]]*\|[[:space:]]*([^|]*[^|[:space:]])[[:space:]]*\|.*/\1|\2/p' "$1"; }
+rows() { LC_ALL=C sed -nE 's/^\|[[:space:]]*([0-9]+)[[:space:]]*\|[[:space:]]*([^|]*[^|[:space:]])[[:space:]]*\|.*/\1|\2/p' "$1"; }
 max_of() { cut -d'|' -f1 | sort -n | tail -1; }
 
 branch() { g branch --show-current; }
