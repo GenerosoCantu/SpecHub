@@ -43,7 +43,7 @@ The Claude Code adapter is the one tested end to end. The Codex and Copilot adap
 
 ## Requirements
 
-- macOS or Linux, bash 3.2+, git, `lsof`, python3 (used by `dispatch.sh` and `changelog.sh`)
+- macOS, Linux or Windows (Git Bash), bash 3.2+, git, Python 3.7+ (`python3`, or the `py -3` launcher on Windows — `scripts/python.sh` picks one; used by `dispatch.sh`, `metrics.sh`, `lock.sh`, `status.sh`, `changelog.sh` and the hooks), `lsof` on macOS/Linux (`netstat` on Windows)
 - One agent CLI on PATH: `claude` ([Claude Code](https://claude.com/claude-code)), `codex` ([Codex CLI](https://github.com/openai/codex)) or `copilot` ([Copilot CLI](https://github.com/github/copilot-cli))
 - The toolchains of your services (node, java, python, …) for `stack.sh` to run them
 

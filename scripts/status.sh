@@ -26,6 +26,8 @@ HUB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATUS="$HUB_DIR/STATUS.md"
 STACK="$HUB_DIR/scripts/stack.sh"
 TRIES="${STATUS_CLAIM_TRIES:-5}"
+# shellcheck disable=SC1091
+. "$HUB_DIR/scripts/python.sh"
 
 log() { printf '[status] %s\n' "$*" >&2; }
 die() { printf '[status] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -79,7 +81,7 @@ cmd_check() {
 insert_row() {
   local n="$1" name="$2" note="$3"; shift 3
   local cells="" s; for s in "$@"; do cells="${cells:+$cells · }\`$s\` 🔄"; done
-  ROW="| $n | $name | $cells | $note |" python3 - "$STATUS" <<'PY'
+  ROW="| $n | $name | $cells | $note |" hub_python - "$STATUS" <<'PY'
 import io, os, re, sys
 p = sys.argv[1]; lines = io.open(p, encoding='utf-8').read().split('\n')
 try:

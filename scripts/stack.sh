@@ -32,6 +32,9 @@
 # by side on one machine, each from its own hub (scripts/instance.sh creates one).
 # Processes run detached in their own process group; PIDs live in .run/ and
 # output in .logs/. Nothing is installed or written outside those two dirs.
+# Windows runs the same script from Git Bash: npm is told to run package.json scripts through
+# this bash instead of cmd.exe (so `PORT=… cmd` and `${PORT:-3001}` work), ports are read with
+# netstat instead of lsof, and stop kills the native process tree (npm → cmd.exe → node).
 # ---------------------------------------------------------------------------
 set -u
 set -m   # each background job gets its own process group -> clean tree kill
@@ -62,6 +65,17 @@ done
 export PATH
 export BROWSER=none          # keep dev servers from opening browser tabs
 export FORCE_COLOR=1
+
+# --- platform ------------------------------------------------------------------
+# Git Bash / MSYS on Windows. npm would hand package.json scripts to cmd.exe, where
+# `PORT=… react-scripts start` and `${PORT:-3001}` are not syntax: npm's script-shell is set to
+# this bash (macOS/Linux keep /bin/sh). lsof does not exist (netstat does), and the recorded pid
+# is an MSYS bash whose native children outlive a signal — see port_pid and win_kill_tree.
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) WINDOWS=1 ;; *) WINDOWS=0 ;; esac
+if [ "$WINDOWS" = 1 ]; then
+  BASH_EXE="$(command -v bash)"; [ -f "$BASH_EXE.exe" ] && BASH_EXE="$BASH_EXE.exe"
+  npm_config_script_shell="$(cygpath -w "$BASH_EXE")"; export npm_config_script_shell
+fi
 
 # --- registry (from spechub.conf) -----------------------------------------------
 SERVICE_TABLE="$(printf '%s\n' "$SERVICES" | grep -v '^[[:space:]]*#' | grep '|')"
@@ -154,7 +168,24 @@ running_pid() {           # echoes pid if the recorded process is alive
   echo "$pid"
 }
 
-port_pid() { lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1; }
+# Pid listening on TCP port $1 (a Windows pid on Windows), or nothing.
+port_pid() {
+  if [ "$WINDOWS" = 1 ]; then
+    netstat -ano 2>/dev/null | awk -v p="$1" '$1 == "TCP" && $4 == "LISTENING" && $2 ~ (":" p "$") {print $5; exit}'
+  else
+    lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1
+  fi
+}
+# Windows: the pid file holds the MSYS pid of the bash that exec'd the start command; npm, cmd.exe
+# and node run under it as native processes that a signal to the group never reaches. ps maps the
+# MSYS pid to its Windows pid (the WINPID column), and taskkill /T takes the whole tree down.
+win_pid() { ps -p "$1" 2>/dev/null | awk -v p="$1" '{for (i = 1; i <= NF; i++) if ($i == p) {print $(i + 3); exit}}'; }
+win_kill_tree() {
+  local w; w="$(win_pid "$1")"
+  [ -z "$w" ] || taskkill //T //F //PID "$w" >/dev/null 2>&1   # `//`: Git Bash would turn /T into a path
+  kill -KILL "$1" 2>/dev/null
+  return 0
+}
 
 # Announce which services actually moved, and which silently fell back. Silence
 # here would be the trap: you would test the main checkout believing otherwise.
@@ -219,7 +250,8 @@ stop_one() {
   local name="$1" pid port owner
   port="$(svc_port "$name")"
   if pid="$(running_pid "$name")"; then
-    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    if [ "$WINDOWS" = 1 ]; then win_kill_tree "$pid"
+    else kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; fi
     local i=0
     while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i+1)); done
     if kill -0 "$pid" 2>/dev/null; then
@@ -321,7 +353,7 @@ svc_git_root_rel() {
 cmd_repos() { local n; for n in $ALL_SERVICES; do printf '%s|%s|%s|%s|%s|%s\n' "$n" "$(svc_base_dir "$n")" "$(svc_kind "$n")" "$(svc_git_root "$n")" "$(svc_subpath "$n")" "$(svc_git_root_rel "$n")"; done; }
 cmd_root() { echo "$ROOT"; }
 
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # Pull -w/--worktree out of the arguments wherever it appears, so it composes
 # with every subcommand and with service names.

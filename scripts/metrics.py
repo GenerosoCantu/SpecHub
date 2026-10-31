@@ -12,6 +12,8 @@ guess.
 """
 import sys, os, json, re, glob, datetime, collections
 
+sys.stdout.reconfigure(newline='\n')   # the shell scripts parse this output: no \r\n from a Windows Python
+
 HUB    = os.environ.get('HUB_DIR') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(HUB, 'metrics', 'ledger.jsonl')
 PRICES = os.path.join(HUB, 'metrics', 'prices.tsv')
@@ -488,8 +490,16 @@ def cmd_emit(argv):
 
 # --------------------------------------------------------------------------- hub sessions
 def transcript_dir():
-    return os.path.join(os.path.expanduser('~'), '.claude', 'projects',
-                        re.sub(r'[^A-Za-z0-9]', '-', HUB))
+    base = os.path.join(os.path.expanduser('~'), '.claude', 'projects')
+    name = re.sub(r'[^A-Za-z0-9]', '-', HUB)
+    path = os.path.join(base, name)
+    if not os.path.isdir(path) and os.path.isdir(base):
+        # Windows: Claude Code names the folder after the cwd as it was spelled, so the drive letter's
+        # case (c-- vs C--) may differ from HUB_DIR's; the file system itself is case-insensitive.
+        for d in os.listdir(base):
+            if d.lower() == name.lower():
+                return os.path.join(base, d)
+    return path
 
 
 def transcript_files(path):

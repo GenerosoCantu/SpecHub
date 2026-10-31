@@ -191,7 +191,7 @@ cmd_files() {
     case "$dir" in "$SRC_ROOT"/.mongo|"$SRC_ROOT"/.mongo/*) continue ;; esac   # an instance's own mongod data
     rel="$(rel_to_src "$dir")"; dest="$root/$rel"
     mkdir -p "$dest"
-    rsync -a "$dir/" "$dest/"
+    if command -v rsync >/dev/null 2>&1; then rsync -a "$dir/" "$dest/"; else cp -a "$dir/." "$dest/"; fi   # Git Bash has no rsync
     files=0; total=0
     while IFS= read -r f; do
       [ -n "$f" ] || continue
@@ -360,7 +360,8 @@ cmd_sync() {
   git -C "$HUB_GIT" fetch --quiet origin "$branch" || die "could not fetch origin/$branch (offline?)"
 
   # 1. The ledger: record any transcript the hooks missed, then commit the file alone.
-  "$HUB_DIR/scripts/metrics.sh" sync --quiet >/dev/null 2>&1 || true
+  "$HUB_DIR/scripts/metrics.sh" sync --quiet >/dev/null 2>&1 \
+    || log "hub — WARNING: scripts/metrics.sh sync failed (no Python 3?); sessions the hooks missed stay unrecorded"
   ledger="${HUB_SUB:+$HUB_SUB/}metrics/ledger.jsonl"
   if [ -n "$(git -C "$HUB_GIT" status --porcelain -- "$ledger")" ]; then
     git -C "$HUB_GIT" commit --quiet -m "metrics: hub sessions" -- "$ledger"

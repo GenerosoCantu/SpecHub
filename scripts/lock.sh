@@ -49,6 +49,8 @@ TRIES="${LOCK_CLAIM_TRIES:-5}"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 STALE_DAYS="${LOCK_STALE_DAYS:-14}"
+# shellcheck disable=SC1091
+. "$HUB_DIR/scripts/python.sh"
 
 log() { printf '[lock] %s\n' "$*" >&2; }
 die() { printf '[lock] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -76,9 +78,10 @@ fetch_quiet() { has_origin && [ -n "$(branch)" ] && g fetch --quiet origin "$(br
 #   remove <feature>                       "removed" / "absent"
 #   check <stale-days> [origin-file]       conflicts (held/held: exit 1), overlaps, stale and orphan lines
 #   list                                   aligned board
-board() { python3 - "$LOCKS" "$HUB_DIR" "$@" <<'PY'
+board() { hub_python - "$LOCKS" "$HUB_DIR" "$@" <<'PY'
 import io, os, re, sys
 from datetime import date
+sys.stdout.reconfigure(newline='\n')   # the shell parses this output: no \r\n from a Windows Python
 LOCKS, HUB, op, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 ROW = re.compile(r'^\|\s*`([^`|]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|\s*$')
 HELD, DESIGNING = 'held', 'designing'

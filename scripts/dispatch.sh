@@ -78,6 +78,8 @@ CONF="$HUB_DIR/spechub.conf"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 # shellcheck disable=SC1091
+. "$HUB_DIR/scripts/python.sh"
+# shellcheck disable=SC1091
 [ -f "$HUB_DIR/spechub.local.conf" ] && . "$HUB_DIR/spechub.local.conf"
 REPOS_ROOT="${REPOS_ROOT:-$HUB_DIR/..}"
 case "$REPOS_ROOT" in /*) ;; *) REPOS_ROOT="$(cd "$HUB_DIR/$REPOS_ROOT" 2>/dev/null && pwd || echo "$HUB_DIR/$REPOS_ROOT")" ;; esac
@@ -136,8 +138,8 @@ log()  { printf '[dispatch] %s\n' "$*" >&2; }
 die()  { printf '[dispatch] ERROR: %s\n' "$*" >&2; exit 1; }
 now()  { date '+%Y-%m-%d %H:%M'; }
 stamp(){ date '+%Y%m%d-%H%M%S'; }
-# BSD date has no %N, so milliseconds come from python3 (already required by the hub scripts).
-now_ms() { python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo $(( $(date +%s) * 1000 )); }
+# BSD date has no %N, so milliseconds come from Python (already required by the hub scripts).
+now_ms() { hub_python -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo $(( $(date +%s) * 1000 )); }
 
 # Record one event in the metrics ledger. Never fails the caller: observability must not be able
 # to break a dispatch. See scripts/metrics.sh.
@@ -339,8 +341,8 @@ setup_worktree() {  # setup_worktree <repo> <branch> <worktree> [<service>]
 ensure_trust() {  # ensure_trust <path>... — the worktree and its main repo (project settings are keyed on the latter)
   local cfg="$HOME/.claude.json"
   [ -f "$cfg" ] || return 0
-  command -v python3 >/dev/null 2>&1 || { log "WARNING: python3 not found — cannot pre-register trust for $*"; return 0; }
-  python3 - "$cfg" "$@" <<'PY' || log "WARNING: could not update $cfg — trust the worktree by hand if the run's log says the workspace is not trusted"
+  [ -n "${HUB_PYTHON:-}" ] || { log "WARNING: Python 3 not found — cannot pre-register trust for $*"; return 0; }
+  hub_python - "$cfg" "$@" <<'PY' || log "WARNING: could not update $cfg — trust the worktree by hand if the run's log says the workspace is not trusted"
 import json, os, sys, tempfile
 cfg, paths = sys.argv[1], sys.argv[2:]
 with open(cfg) as fh: data = json.load(fh)
@@ -395,6 +397,7 @@ services_under() {  # services_under <dir> — every running service whose cwd i
 service_cwd() {  # service_cwd <service> — working directory of the running service, or empty
   local pid; pid="$("$STACK" is-running "$1" 2>/dev/null)" || return 0
   [ -n "$pid" ] || return 0
+  if [ -e "/proc/$pid/cwd" ]; then readlink "/proc/$pid/cwd" 2>/dev/null; return 0; fi   # Linux, Git Bash (no lsof there)
   lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }
 

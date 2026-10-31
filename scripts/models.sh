@@ -21,9 +21,11 @@
 set -euo pipefail
 HUB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export HUB_DIR
+# shellcheck disable=SC1091
+. "$HUB_DIR/scripts/python.sh"
 
 case "${1:-}" in
   check|upgrade)
-    exec python3 "$HUB_DIR/scripts/models.py" "$@" ;;
+    hub_python "$HUB_DIR/scripts/models.py" "$@" ;;
   *) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

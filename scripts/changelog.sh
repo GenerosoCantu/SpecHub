@@ -13,6 +13,8 @@ HUB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG="$HUB_DIR/CHANGELOG.md"
 ARCHIVE="$HUB_DIR/archive/CHANGELOG-archive.md"
 MAX="${CHANGELOG_MAX_CHARS:-900}"
+# shellcheck disable=SC1091
+. "$HUB_DIR/scripts/python.sh"
 
 die() { printf '[changelog] ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -23,7 +25,7 @@ cmd_add() {
   local n=${#text}
   [ "$n" -le "$MAX" ] || die "Entry is $n characters; the cap is $MAX. Keep what shipped + deviations + commit refs; rationale goes in the archived feature file."
   local entry; entry="*($(date '+%Y-%m-%d') — ${text})*"
-  ENTRY="$entry" python3 - "$LOG" <<'PY'
+  ENTRY="$entry" hub_python - "$LOG" <<'PY'
 import io, os, sys
 p = sys.argv[1]; s = io.open(p, encoding='utf-8').read()
 marker = '\n---\n\n'
@@ -38,7 +40,7 @@ PY
 cmd_archive() {
   local before="${1:-}"
   printf '%s' "$before" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die 'Usage: changelog.sh archive <YYYY-MM-DD>'
-  python3 - "$LOG" "$ARCHIVE" "$before" <<'PY'
+  hub_python - "$LOG" "$ARCHIVE" "$before" <<'PY'
 import io, os, re, sys
 log, arch, before = sys.argv[1:4]
 s = io.open(log, encoding='utf-8').read()

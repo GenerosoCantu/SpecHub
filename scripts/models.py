@@ -7,6 +7,8 @@ it writes prices only through `metrics.sh price`, so prices.tsv keeps a single w
 """
 import sys, os, re, time, subprocess, urllib.request
 
+sys.stdout.reconfigure(newline='\n')   # the hook reads this output: no \r\n from a Windows Python
+
 HUB        = os.environ.get('HUB_DIR') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRICES     = os.path.join(HUB, 'metrics', 'prices.tsv')
 CONF       = os.path.join(HUB, 'spechub.conf')
